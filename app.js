@@ -58,6 +58,49 @@ function canvasPagesForOcr(img,rotation){
  if(canvases.length===8&&((8-1)*step+bandHeight)<h)return [canvasForImage(img,rotation)];
  return canvases;
 }
+// v11 — Trim obvious dark desk margins while keeping the original photo unchanged.
+// Conservative: only trim if all three scan lines agree on a bright central document.
+function autoTrimReceiptSource(img){
+ const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
+ if(w<160||h<150)return img;
+ const sw=192,sh=144,c=document.createElement('canvas');c.width=sw;c.height=sh;
+ const cx=c.getContext('2d',{willReadFrequently:true});cx.drawImage(img,0,0,sw,sh);
+ const pix=cx.getImageData(0,0,sw,sh).data;
+ const light=(x,y)=>{const k=(y*sw+x)*4;return .299*pix[k]+.587*pix[k+1]+.114*pix[k+2]};
+ const spans=[];
+ for(const fr of [.37,.53,.68]){
+  const y=Math.round(sh*fr);let outer=0;
+  for(let t=0;t<12;t++)outer+=(light(t,y)+light(sw-1-t,y))/24;
+  const center=Array.from({length:24},(_,i)=>light(Math.round(sw*.44)+i,y)).reduce((x,v)=>x+v,0)/24;
+  if(center<145||center<outer+28)return img;
+  const threshold=Math.max(outer+23,(outer+center)/2);
+  let left=Math.round(sw*.1),right=Math.round(sw*.9);
+  for(let x=8;x<sw*.49;x++){
+   const sample=Array.from({length:7},(_,k)=>light(x+k,y)).reduce((q,v)=>q+v,0)/7;
+   if(sample>threshold){left=x;break}
+  }
+  for(let x=sw-9;x>sw*.51;x--){
+   const sample=Array.from({length:7},(_,k)=>light(x-k,y)).reduce((q,v)=>q+v,0)/7;
+   if(sample>threshold){right=x;break}
+  }
+  spans.push({left,right});
+ }
+ const l=Math.min(...spans.map(z=>z.left)),r=Math.max(...spans.map(z=>z.right));
+ const disagreements=Math.max(...spans.map(z=>z.left))-Math.min(...spans.map(z=>z.left)) + Math.max(...spans.map(z=>z.right))-Math.min(...spans.map(z=>z.right));
+ if(r-l<sw*.35||r-l>sw*.88||disagreements>sw*.15)return img;
+ const pad=Math.round(sw*.028),x1=Math.max(0,l-pad),x2=Math.min(sw,r+pad);
+ const crop=document.createElement('canvas');crop.width=Math.round((x2-x1)*w/sw);crop.height=h;
+ crop.getContext('2d',{willReadFrequently:true}).drawImage(img,x1*w/sw,0,(x2-x1)*w/sw,h,0,0,crop.width,h);
+ return crop;
+}
+// Re-scan the upper store and the lower date separately. Neither pass makes up missing text.
+function focusedCanvasForOcr(img,rotation,start,end){
+ const full=canvasForImage(img,rotation),y=Math.round(full.height*start),height=Math.max(1,Math.round(full.height*end)-y);
+ const sc=Math.min(2,Math.max(1,1900/Math.max(full.width,height)));
+ const c=document.createElement('canvas');c.width=Math.max(1,Math.round(full.width*sc));c.height=Math.max(1,Math.round(height*sc));
+ c.getContext('2d',{willReadFrequently:true}).drawImage(full,0,y,full.width,height,0,0,c.width,c.height);
+ full.width=0;full.height=0;return c;
+}
 function headerCanvasForOcr(img,rotation){
  const c=canvasForImage(img,rotation);const h=Math.max(1,Math.round(c.height*.52));
  const scale=Math.min(1.7,Math.max(1,1700/Math.max(1,c.width)));
@@ -279,6 +322,30 @@ function findDateV6(lines){
  }
  return candidates.filter(x=>x.score>20).sort((a,b)=>b.score-a.score)[0]||null;
 }
+// v11 — read fragmented dates even if the OCR inserts spaces or line breaks.
+function findDateV11(lines){
+ const original=findDateV6(lines), candidates=[];
+ const cleaned=lines.map(line=>line.replace(/[ＯＯOｏo]/g,'0').replace(/(?<=\d)\s+(?=\d)/g,'')
+   .replace(/(20\d{2})\s*[年]?\s*(?=[01][0-9]\s*月)/,'$1年'));
+ for(let i=0;i<cleaned.length;i++){
+  // Never concatenate arbitrary unrelated text. Require the date's four digit year.
+  const joined=cleaned.slice(i,i+2).join('').replace(/[\s　]/g,'');
+  const match=joined.match(/(?<!\d)(20\d{2})[年\/\-.]?(\d{1,2})[月\/\-.](\d{1,2})日?(?!\d)/);
+  if(!match)continue;
+  const year=+match[1],month=+match[2],day=+match[3];if(!validDate(year,month,day))continue;
+  const value=[year,String(month).padStart(2,'0'),String(day).padStart(2,'0')].join('-');
+  // A date printed twice is stronger evidence than a single uncertain pass.
+  const score=62+(i<12?10:0)+(/日付|利用日|取引日|発行日|お買上/.test(joined)?24:0)
+    + (cleaned.some((other,j)=>j!==i&&other.includes(`${year}年${month}月${day}日`))?18:0);
+  candidates.push({value,score,why:joined.slice(0,80)});
+ }
+ candidates.sort((x,y)=>y.score-x.score);
+ const fallback=candidates[0];
+ if(!original)return fallback||null;
+ if(!fallback||fallback.value===original.value)return original;
+ // Date conflict: do not silently decide between two similarly plausible dates.
+ return original.score>fallback.score+22?original:fallback.score>original.score+22?fallback:null;
+}
 function amountLineContext(line){
  const positive=/(?:総合計|ご請求(?:金額|額)|請求金額|お支払(?:い)?(?:金額|合計|額)|お買(?:い)?上(?:げ)?(?:金額|計|合計)|販売(?:金額|合計)|通行(?:料金|料)|利用(?:料金|金額|料|額)|精算(?:金額|額)|領収(?:金額|額)|料金合計|支払(?:総額|金額|額)|税込(?:合計|金額|総額)|合計(?:金額|額)?|現計|お会計|今回ご利用額|決済金額|TOTAL(?: AMOUNT)?|AMOUNT DUE|BALANCE DUE)/i;
  const negative=/(?:小計|税抜|税別|本体価格|単価|数量|ﾘｯﾄﾙ|リットル|給油量|給油数量|燃料油単価|お釣り?|おつり|釣銭|お預り|預り金|値引|割引|クーポン|ポイント|残高|消費税|内税|外税|税額|税率|登録番号|事業者番号|請求書番号|カード番号|車両番号|お客様番号|領収書NO|伝票番号|処理番号|認証番号|取引番号|管理番号|電話|TEL|FAX|受付番号|整理番号|有効期限|区間番号)/i;
@@ -354,6 +421,27 @@ function findInvoiceV6(text){
  }
  const ranked=found.sort((a,b)=>b.score-a.score);return ranked[0]||null;
 }
+function findStoreV11(lines){
+ const original=findStoreV6(lines);
+ const top=lines.slice(0,24).map(x=>String(x).normalize('NFKC'));
+ const joined=top.join(' '),compact=condensedShopText(joined);
+ const evidence=/(?:セ[ブプフ][ンソ].{0,6}イレ[ブプフ][ンソ]|7.?ELEVEN|SEVEN.?ELEVEN|セブン.{0,5}レブン)/i.test(compact);
+ if(!evidence)return original;
+ const branches=[];
+ for(let i=0;i<Math.min(20,top.length);i++){
+  const line=top[i].replace(/[ 　]/g,'');
+  if(/(?:電話|TEL|事業者|登録|大阪府|市|〒|￥|¥|領収|10:|16:|2026年)/.test(line))continue;
+  const match=line.match(/([一-龠々ぁ-んァ-ヶA-Za-z0-9ー]{2,28}店)/);
+  if(match&&match[1].length<=28){
+    let name=match[1].replace(/^.*?(?:イレブン|イレプン)/,'').replace(/^[-‐ー]/,'');
+    if(name.length>=3 && !/(領収|商店|印刷|商品)/.test(name))branches.push({value:name,score:120-i});
+  }
+ }
+ const shop=branches.sort((x,y)=>y.score-x.score)[0];
+ const candidate={value:'セブン‐イレブン'+(shop?' '+shop.value:''),score:shop?205:155,why:joined.slice(0,80)};
+ if(original&&original.value.startsWith('セブン‐イレブン')&&original.value.length>candidate.value.length)return original;
+ return candidate;
+}
 function findStoreV6(lines){
  const base=findStore(lines);const known=[
   {pattern:/\b(?:NEXCO|ネクスコ)\s*(?:東日本|中日本|西日本)?\b/i,name:null},
@@ -386,7 +474,7 @@ function suggestCategoryV6(text){
 }
 function parseReceipt(text){const normalized=normalizeText(text);const lines=normalized.split(/\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
  const total=findAmountV6(lines),tax=findTaxV6(lines,total?.value);
- const fields={date:findDateV6(lines),amount:total,store:findStoreV6(lines),taxAmount:tax,invoiceNo:findInvoiceV6(normalized),payment:findPayment(normalized),taxRate:findTaxRate(normalized),category:suggestCategoryV6(normalized)};
+ const fields={date:findDateV11(lines),amount:total,store:findStoreV11(lines),taxAmount:tax,invoiceNo:findInvoiceV6(normalized),payment:findPayment(normalized),taxRate:findTaxRate(normalized),category:suggestCategoryV6(normalized)};
  if(fields.taxAmount&&fields.amount){
   const tax=fields.taxAmount.value,total=fields.amount.value;
   if(tax>total||tax<total*.0005||tax>total*.12)fields.taxAmount=null;
@@ -408,7 +496,9 @@ $('ocr').onclick=async()=>{
  try{
   const img=await decodeImage(selectedFile),rotation=Number($('rotation').value)||0;
   // Prefer explicit receipt-region crop over full background.
-  const source=cropImageSource(img,cropBox);pages=canvasPagesForOcr(source,rotation);
+  const manuallyCropped=cropImageSource(img,cropBox);
+  const source=(!cropBox&&$('autoTrim').checked)?autoTrimReceiptSource(manuallyCropped):manuallyCropped;
+  pages=canvasPagesForOcr(source,rotation);
   notice('文字認識の準備をしています…');
   if(!window.Tesseract)await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
   worker=await Tesseract.createWorker('jpn+eng',1,{logger:msg=>{if(msg.status==='recognizing text')notice(`文字認識中：${Math.round(msg.progress*100)}%\n完了後、金額・日付・店名を確認してね。`)}});
@@ -430,18 +520,25 @@ $('ocr').onclick=async()=>{
    }
    second=parseReceipt(rawTwo.join('\n'));
   }
-  let data=mergeFields(first,second),third=null;
-  if($('ocrMode').value==='high'&&(!data.store||!data.invoiceNo||!data.date||!data.amount)){
-   // Enlarging the receipt header often helps with stylized store logos and tiny T numbers.
-   notice('小さな店名・T番号を拡大して確認しています…');
-   const header=headerCanvasForOcr(source,rotation);
+  let data=mergeFields(first,second),third=null,fourth=null;
+  if($('ocrMode').value==='high'&&(!data.store||!data.invoiceNo||!data.date)){
+   notice('領収書の上部（店名・T番号）を拡大しています…');
+   const upper=focusedCanvasForOcr(source,rotation,0,.46);
    try{
     await worker.setParameters({tessedit_pageseg_mode:'6'});
-    third=parseReceipt((await worker.recognize(header)).data.text);
-    const improved=mergeFields({fields:data},third);
-    // Extra header-only OCR must not override amounts/dates found on the complete image.
-    for(const key of ['store','invoiceNo','date'])if(improved[key])data[key]=improved[key];
-   }finally{header.width=0;header.height=0}
+    third=parseReceipt((await worker.recognize(upper)).data.text);
+    for(const key of ['store','invoiceNo'])if(third.fields[key]&&(!data[key]||third.fields[key].score>data[key].score+25))data[key]=third.fields[key];
+    if(!data.date&&third.fields.date)data.date=third.fields.date;
+   }finally{upper.width=0;upper.height=0}
+  }
+  if($('ocrMode').value==='high'&&!data.date){
+   notice('領収書の下部（日付）を拡大しています…');
+   const lower=focusedCanvasForOcr(source,rotation,.43,.95);
+   try{
+    await worker.setParameters({tessedit_pageseg_mode:'6'});
+    fourth=parseReceipt((await worker.recognize(lower)).data.text);
+    if(fourth.fields.date)data.date=fourth.fields.date;
+   }finally{lower.width=0;lower.height=0}
   }
   // Never allow the initial value (today) or a previous scan's values to masquerade as OCR results.
   for(const key of ['date','amount','store','taxAmount','invoiceNo'])$(key).value=data[key]?.value??'';
@@ -452,7 +549,7 @@ $('ocr').onclick=async()=>{
   $('reviewed').checked=false;$('invoiceVerified').checked=false;lastOcrData=data;renderOcrEvidence(data);
   if(/(?:コピー代|コピ一代|コピー料金|複写代)/.test((first.raw||'')+' '+(second?.raw||'')+' '+(third?.raw||'')))$('detail').value='コピー代';
   else $('detail').value='';
-  $('ocrText').textContent=first.raw+(second?'\n\n===== 補正画像の認識結果 =====\n'+second.raw:'')+(third?'\n\n===== 店名と番号（拡大）の認識結果 =====\n'+third.raw:'');
+  $('ocrText').textContent=first.raw+(second?'\n\n===== 補正画像の認識結果 =====\n'+second.raw:'')+(third?'\n\n===== 上部の再解析 =====\n'+third.raw:'')+(fourth?'\n\n===== 下部の日付の再解析 =====\n'+fourth.raw:'');
   updateBusinessEstimate();
   const missing=[];if(!data.date)missing.push('日付');if(!data.amount)missing.push('金額');if(!data.store)missing.push('店名');
   if(!data.invoiceNo||!data.taxAmount)showSaveStatus('T番号や消費税額を認識できなかったときは空欄のままです。高速道路・ガソリン等でも原本と照合して保存してね。','info');

@@ -49,7 +49,7 @@ footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line
 </style>
 </head>
 <body>
-<header><div><h1>🧾 レシート帳 <span style="font-size:12px;font-weight:500;opacity:.8">v10</span></h1><p>領収書の撮影・仕分け・月別集計｜データはこの端末に保存</p></div></header>
+<header><div><h1>🧾 レシート帳 <span style="font-size:12px;font-weight:500;opacity:.8">v11</span></h1><p>領収書の撮影・仕分け・月別集計｜データはこの端末に保存</p></div></header>
 <div class="wrap">
   <div class="stats">
     <div class="stat"><span id="totalLabel">表示期間の経費</span><strong id="total">¥0</strong><em id="totalPaid">支払総額 ¥0</em></div>
@@ -67,10 +67,11 @@ footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line
       <div class="actions"><button type="button" id="cropApply">この範囲を使う</button><button type="button" id="cropCancel" class="secondary">閉じる</button></div>
     </section>
     <p class="hint">写真に机や周囲が大きく写っていると、店名や日付が誤認識されやすくなります。先に「領収書だけを囲んで読み取る」を使うのがおすすめ。</p>
-    <div class="grid"><div><label for="ocrMode">文字読み取りモード</label><select id="ocrMode"><option value="high">高精度（補正＋店名と番号の拡大解析）</option><option value="fast">高速（1回解析）</option></select></div><div><label for="rotation">画像の回転</label><select id="rotation"><option value="0">そのまま</option><option value="90">右へ90°</option><option value="180">180°</option><option value="270">左へ90°</option></select></div></div>
+    <div class="checkrow"><input type="checkbox" id="autoTrim" checked><label for="autoTrim">背景が濃い写真は領収書を自動で拡大（切り抜き失敗時は原画像を使用）</label></div>
+    <div class="grid"><div><label for="ocrMode">文字読み取りモード</label><select id="ocrMode"><option value="high">高精度（背景補正＋上部の店名／下部の日付を再解析）</option><option value="fast">高速（1回解析）</option></select></div><div><label for="rotation">画像の回転</label><select id="rotation"><option value="0">そのまま</option><option value="90">右へ90°</option><option value="180">180°</option><option value="270">左へ90°</option></select></div></div>
     <div class="actions"><button id="ocr" type="button">🔍 写真から自動入力</button><button class="secondary" id="clear" type="button">入力をクリア</button></div>
     <section class="trustBox" aria-label="読み取り確認"><strong>🔎 OCRの確認が必要な項目</strong><div id="ocrEvidence" class="evidence"><span class="hint">読み取ると項目別に目安が表示されます</span></div><p class="hint">信頼度は推定値です。T番号・金額・日付は原本を必ず目視で確認してね。</p></section>
-    <p class="hint">iPhone内で日本語＋英語の文字認識を実施。高精度モードは画像補正に加え、店名やT番号が見つからない場合に上部を拡大解析します。店名や日付が不明な場合は空欄にします。必ず領収書の原本と照合してから保存してください。</p>
+    <p class="hint">iPhone内で日本語＋英語の文字認識を実施。高精度モードは画像補正に加え、店名やT番号が見つからない場合は上部を、日付が見つからなければ下部も拡大解析します。店名や日付が不明な場合は空欄にします。必ず領収書の原本と照合してから保存してください。</p>
     <div id="notice" role="status" aria-live="polite"></div>
     <details id="ocrDetails"><summary>読み取った文字を確認</summary><pre id="ocrText">まだ解析していません。</pre></details>
     <div class="sectionTitle">基本情報</div>
@@ -122,7 +123,7 @@ footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line
   </section>
 </div>
 <footer>無料・個人利用向け。読み取り結果、経費科目、税率・税額、事業使用割合はご自身で確認してください。このアプリは電子帳簿保存法への適合を保証しません。紙の領収書は保管してください。</footer>
-<script src="app.js?v=10-all"></script>
-<script src="features.js?v=10-all"></script>
+<script src="app.js?v=11-ocr"></script>
+<script src="features.js?v=11-ocr"></script>
 </body>
 </html>

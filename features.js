@@ -145,17 +145,26 @@ $('batchScan').onclick=async()=>{
    const file=files[i];$('batchProgress').textContent=`${files.length}枚中 ${i+1}枚目を解析中。終了した候補から確認できるよ。`;
    const preview=URL.createObjectURL(file);let parsed=null,status='pending',pages=[];
    try{
-    const img=await decodeImage(file);pages=canvasPagesForOcr(img,0);
+    const img=await decodeImage(file);const source=$('autoTrim').checked?autoTrimReceiptSource(img):img;pages=canvasPagesForOcr(source,0);
     const raw=[];
     for(const page of pages){if(batchCancelled)break;raw.push((await worker.recognize(page)).data.text)}
     parsed=parseReceipt(raw.join('\n'));
-    if(!batchCancelled&&(!parsed.fields.amount||!parsed.fields.date||!parsed.fields.store)){
+    if(!batchCancelled&&(!parsed.fields.invoiceNo||!parsed.fields.date||!parsed.fields.store)){
      await worker.setParameters({tessedit_pageseg_mode:'6'});
-     const header=headerCanvasForOcr(img,0);try{
-      const extra=parseReceipt((await worker.recognize(header)).data.text);
-      const merged=mergeFields(parsed,extra);for(const k of Object.keys(merged))if(merged[k])parsed.fields[k]=merged[k];
+     const upper=focusedCanvasForOcr(source,0,0,.46);try{
+      const extra=parseReceipt((await worker.recognize(upper)).data.text);
+      for(const k of ['store','invoiceNo'])if(extra.fields[k]&&(!parsed.fields[k]||extra.fields[k].score>parsed.fields[k].score+25))parsed.fields[k]=extra.fields[k];
+      if(!parsed.fields.date&&extra.fields.date)parsed.fields.date=extra.fields.date;
       parsed.raw+='\n[上部拡大]\n'+extra.raw;
-     }finally{header.width=0;header.height=0;await worker.setParameters({tessedit_pageseg_mode:'11'})}
+     }finally{upper.width=0;upper.height=0}
+     if(!parsed.fields.date&&!batchCancelled){
+      const lower=focusedCanvasForOcr(source,0,.43,.95);try{
+       const extra=parseReceipt((await worker.recognize(lower)).data.text);
+       if(extra.fields.date)parsed.fields.date=extra.fields.date;
+       parsed.raw+='\n[下部の日付再解析]\n'+extra.raw;
+      }finally{lower.width=0;lower.height=0}
+     }
+     await worker.setParameters({tessedit_pageseg_mode:'11'});
     }
    }catch(e){status='error';parsed={fields:{},raw:'エラー：'+(e?.message||e)}}
    finally{for(const page of pages){page.width=0;page.height=0}}
