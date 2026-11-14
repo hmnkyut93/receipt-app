@@ -1,1 +1,72 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#146c5b"><title>レシート帳</title><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icon.svg"><style>:root{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;color:#1c2926;background:#f4f7f5}*{box-sizing:border-box}body{margin:0}header{background:#146c5b;color:white;padding:22px 18px 18px}h1{font-size:23px;margin:0 0 5px}small{opacity:.85}.wrap{max-width:780px;margin:auto;padding:16px}.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:15px}.stat,.panel,.entry{background:white;border-radius:15px;padding:16px;box-shadow:0 1px 5px #0000000c}.stat b{display:block;font-size:23px;margin-top:8px}.panel{margin-bottom:14px}label{display:block;font-size:13px;font-weight:650;margin:11px 0 5px}input,select,button{font:inherit}input,select{width:100%;border:1px solid #ccd7d2;border-radius:9px;padding:11px;background:white}button{border:0;border-radius:10px;padding:12px 14px;font-weight:650;background:#146c5b;color:white;cursor:pointer}button.secondary{background:#e7f0ec;color:#146c5b}button.danger{background:#fff0ed;color:#a32f22}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}.actions button{flex:1}.hint{font-size:12px;color:#64716d;line-height:1.5}.entry{margin:9px 0;display:flex;gap:12px;align-items:center}.entry img{width:56px;height:65px;object-fit:cover;border-radius:7px;background:#eee}.entry main{flex:1;min-width:0}.entry b{display:block;overflow-wrap:anywhere}.entry .meta{font-size:12px;color:#65736e;margin-top:5px}.entry strong{white-space:nowrap}.entry button{padding:7px;font-size:12px}#preview{max-height:180px;max-width:100%;display:none;margin-top:10px;border-radius:8px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.bar{height:10px;border-radius:6px;background:#e4ebe8;overflow:hidden;margin:6px 0 12px}.bar span{display:block;height:100%;background:#146c5b}.hidden{display:none!important}#notice{padding:10px;border-radius:9px;background:#e7f0ec;margin:10px 0;font-size:13px;display:none}footer{padding:10px 18px 30px;color:#66736d;font-size:12px;text-align:center}</style></head><body><header><div style="max-width:780px;margin:auto"><h1>📄 レシート帳</h1><small>写真から記録・集計・保存　|　端末内データ管理</small></div></header><div class="wrap"><div class="stats"><div class="stat"><span>表示月の合計</span><b id="total">¥0</b></div><div class="stat"><span>表示月の枚数</span><b id="count">0枚</b></div></div><section class="panel"><h2 style="font-size:18px;margin:0">📷 領収書を登録</h2><label for="photo">写真を撮る・選ぶ</label><input id="photo" type="file" accept="image/*" capture="environment"><img id="preview" alt="領収書のプレビュー"><div class="actions"><button id="ocr" type="button">文字を自動読み取り</button><button class="secondary" id="clear" type="button">入力をクリア</button></div><p class="hint">初回OCRはネット接続が必要です。無料のブラウザ内OCRで解析し、読み取り結果は必ず確認してください。OCRが使えなくても手入力で登録できます。</p><div id="notice" role="status"></div><div class="grid"><div><label for="date">日付</label><input type="date" id="date"></div><div><label for="amount">金額（税込・円）</label><input id="amount" type="number" min="0" step="1" placeholder="例 1200"></div></div><label for="store">店名・支払先</label><input id="store" placeholder="例 コンビニ"><label for="category">経費科目</label><select id="category"><option>未分類</option><option>消耗品費</option><option>旅費交通費</option><option>通信費</option><option>車両費</option><option>会議費</option><option>接待交際費</option><option>新聞図書費</option><option>水道光熱費</option><option>地代家賃</option><option>雑費</option><option>その他</option></select><label for="memo">内容・メモ</label><input id="memo" placeholder="例 打ち合わせ用の文具"><div class="actions"><button id="save" type="button">領収書を保存</button></div></section><section class="panel"><h2 style="font-size:18px;margin:0 0 10px">📊 月別集計</h2><div class="grid"><div><label for="month">表示月</label><input type="month" id="month"></div><div><label for="filter">経費科目</label><select id="filter"><option value="">すべて</option></select></div></div><div id="breakdown" style="margin-top:15px"></div><div class="actions"><button id="csv" class="secondary">Excel用CSV出力</button><button id="xlsx" class="secondary">Excel (.xlsx) 出力</button></div><p class="hint">出力対象は表示中の月・科目です。Excel形式の出力は初回ネット接続が必要です。CSVはオフラインでも出力できます。</p></section><section class="panel"><h2 style="font-size:18px;margin:0 0 10px">🧾 領収書一覧</h2><div id="entries"></div></section><section class="panel"><h2 style="font-size:18px;margin:0">💾 バックアップ</h2><p class="hint">機種変更・Safariデータ削除に備えて定期的にバックアップしてください。写真を含むJSONファイルを書き出します。保存データはこの端末のブラウザ内にあります。</p><div class="actions"><button id="backup" class="secondary">バックアップ作成</button><button id="restore" class="secondary">バックアップ復元</button><input type="file" id="restoreFile" accept="application/json,.json" class="hidden"></div></section></div><footer>このアプリ自体は税法上の電子帳簿保存要件への適合を保証しません。紙の原本も保管してください。</footer><script src="app.js"></script></body></html>
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#136b59">
+<meta name="description" content="領収書を撮影して仕分け・集計・バックアップする無料の端末内管理アプリ">
+<title>レシート帳</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="512x512" href="icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="レシート帳">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','Hiragino Kaku Gothic ProN',sans-serif;color:#20322d;background:#f3f7f5;font-size:15px}
+*{box-sizing:border-box}body{margin:0}header{background:#136b59;color:#fff;padding:22px 16px 18px}header>div{max-width:860px;margin:auto}h1{font-size:24px;margin:0 0 3px}h2{font-size:18px;margin:0 0 12px}header p{font-size:12px;margin:0;opacity:.85}
+.wrap{max-width:860px;margin:auto;padding:14px 13px 30px}.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:12px}.stat,.panel,.entry{border:1px solid #e2e9e5;background:white;border-radius:15px;padding:15px;box-shadow:0 1px 3px #0d30210a}.stat span{color:#61736a;font-size:12px}.stat strong{display:block;margin:6px 0 2px;font-size:23px;white-space:nowrap}.stat em{font-style:normal;font-size:11px;color:#708078}.panel{margin-bottom:13px}
+label{display:block;font-size:13px;font-weight:700;margin:13px 0 5px}input,select,textarea,button{font:inherit}input,select,textarea{width:100%;border:1px solid #cad7d0;border-radius:9px;padding:11px;min-height:43px;background:white;color:#1e3029}textarea{resize:vertical;min-height:68px}input:focus,select:focus,textarea:focus{outline:2px solid #89c9b3;outline-offset:0}
+button{border:0;border-radius:10px;padding:11px 13px;font-weight:700;background:#136b59;color:#fff;cursor:pointer;min-height:43px}button:disabled{opacity:.5;cursor:wait}button.secondary{background:#e5f1eb;color:#145c4d}button.ghost{background:#edf0ef;color:#40564e}button.danger{background:#fcece9;color:#a13027}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.actions button{flex:1}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 12px}.wide{grid-column:1/-1}.hint{color:#697c72;font-size:12px;line-height:1.6;margin:8px 0}.minor{font-size:12px;color:#697c72}.sectionTitle{border-top:1px solid #e7eeea;margin-top:16px;padding-top:10px;font-size:14px;font-weight:750;color:#265a4a}
+#preview{max-height:250px;width:auto;max-width:100%;border-radius:9px;margin:10px auto 0;display:none;object-fit:contain;border:1px solid #dae4de}#notice{display:none;background:#e9f4ee;border:1px solid #c7e2d6;border-radius:10px;padding:10px;margin:12px 0;font-size:13px;white-space:pre-wrap;line-height:1.5}
+small.note{font-size:11px;color:#6b776f}details{border-radius:10px;background:#f5f8f6;padding:11px;margin:12px 0}summary{font-weight:650;cursor:pointer}#ocrText{font-size:12px;white-space:pre-wrap;max-height:240px;overflow:auto;word-break:break-all}
+.checkrow{display:flex;align-items:center;gap:8px;margin:9px 0}.checkrow input{width:20px;height:20px;min-height:auto}.checkrow label{margin:0;font-size:13px;font-weight:500}.categoryRow{display:flex;gap:8px}.categoryRow input{flex:1;min-width:0}.categoryRow button{flex:0 0 auto}.entry{display:flex;align-items:center;gap:10px;margin:8px 0;padding:12px}.entry img{width:56px;height:72px;object-fit:cover;border-radius:7px;background:#e8ede9;cursor:pointer}.entry main{min-width:0;flex:1}.entry main b{display:block;overflow-wrap:anywhere}.entry .meta{font-size:12px;color:#68796e;line-height:1.5;margin-top:4px}.entry .amount{font-weight:750;white-space:nowrap;text-align:right}.entry .amount small{display:block;color:#66776d;font-size:11px;font-weight:400}.entry .miniActions{display:flex;gap:5px;justify-content:end;margin-top:6px}.entry .miniActions button{padding:7px 9px;font-size:12px;min-height:32px}.bar{height:9px;border-radius:8px;background:#e8efeb;overflow:hidden;margin:5px 0 13px}.bar>span{height:100%;display:block;background:#16856e}.hidden{display:none!important}
+@media(max-width:410px){.wrap{padding:10px}.stat{padding:11px}.stat strong{font-size:20px}.panel{padding:13px}.entry{gap:7px}.entry img{width:45px;height:61px}.entry .miniActions button{padding:6px}.grid{gap:0 8px}}
+footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line-height:1.6}
+</style>
+</head>
+<body>
+<header><div><h1>🧾 レシート帳 <span style="font-size:12px;font-weight:500;opacity:.8">v2</span></h1><p>領収書の撮影・仕分け・月別集計｜データはこの端末に保存</p></div></header>
+<div class="wrap">
+  <div class="stats">
+    <div class="stat"><span id="totalLabel">表示期間の経費</span><strong id="total">¥0</strong><em id="totalPaid">支払総額 ¥0</em></div>
+    <div class="stat"><span>表示期間の領収書</span><strong id="count">0枚</strong><em>保存枚数にアプリ側の上限なし</em></div>
+  </div>
+  <section class="panel">
+    <h2>📷 領収書を登録する</h2>
+    <label for="photo">領収書を撮る・写真から選ぶ</label>
+    <input id="photo" type="file" accept="image/*" capture="environment">
+    <img id="preview" alt="選んだ領収書の写真">
+    <div class="grid"><div><label for="ocrMode">文字読み取りモード</label><select id="ocrMode"><option value="high">高精度（画像補正して2回解析）</option><option value="fast">高速（1回解析）</option></select></div><div><label for="rotation">画像の回転</label><select id="rotation"><option value="0">そのまま</option><option value="90">右へ90°</option><option value="180">180°</option><option value="270">左へ90°</option></select></div></div>
+    <div class="actions"><button id="ocr" type="button">🔍 写真から自動入力</button><button class="secondary" id="clear" type="button">入力をクリア</button></div>
+    <p class="hint">端末内で画像を明るく補正し、日本語＋英語の文字認識をします。高精度は処理が長めです。初回の認識モデル取得には通信が必要で、結果は必ず目視確認してください。</p>
+    <div id="notice" role="status" aria-live="polite"></div>
+    <details id="ocrDetails"><summary>読み取った文字を確認</summary><pre id="ocrText">まだ解析していません。</pre></details>
+    <div class="sectionTitle">基本情報</div>
+    <div class="grid"><div><label for="date">利用日・発行日</label><input type="date" id="date"></div><div><label for="amount">支払総額（税込・円）</label><input type="number" min="0" step="1" id="amount" placeholder="例 1980"></div></div>
+    <label for="store">店名・支払先</label><input id="store" placeholder="例 ガソリンスタンド名">
+    <label for="detail">購入したもの・用途</label><input id="detail" placeholder="例 ガソリン、文房具、打ち合わせ飲食">
+    <div class="grid"><div><label for="category">経費科目</label><select id="category"></select></div><div><label for="payment">支払方法</label><select id="payment"><option>未設定</option><option>現金</option><option>クレジットカード</option><option>デビットカード</option><option>電子マネー</option><option>QR決済</option><option>銀行振込</option><option>その他</option></select></div></div>
+    <label for="customCategory">自分の経費科目を追加（任意）</label><div class="categoryRow"><input id="customCategory" placeholder="例 営業活動費" maxlength="30"><button type="button" class="secondary" id="addCategory">追加</button></div>
+    <div class="sectionTitle">確定申告で役立つ追加項目</div>
+    <div class="grid"><div><label for="taxRate">消費税率（参考）</label><select id="taxRate"><option value="">不明・未設定</option><option value="10">10%</option><option value="8">8%（軽減）</option><option value="0">非課税・対象外</option><option value="mixed">混在</option></select></div><div><label for="taxAmount">消費税額（円）</label><input type="number" min="0" step="1" id="taxAmount" placeholder="例 180"></div><div><label for="businessRate">事業使用割合（%）</label><input type="number" id="businessRate" min="0" max="100" step="1" value="100"></div><div><label for="invoiceNo">適格請求書番号</label><input id="invoiceNo" placeholder="T1234567890123" maxlength="14"></div></div>
+    <p class="hint" id="businessAmount">経費計上の目安：¥0（事業使用割合100%）</p>
+    <label for="memo">メモ（任意）</label><textarea id="memo" placeholder="例 取引先訪問、家事按分の根拠など"></textarea>
+    <div class="actions"><button id="save" type="button">💾 領収書を保存する</button></div>
+  </section>
+  <section class="panel"><h2>📊 月別・年間の集計</h2>
+    <div class="grid"><div><label for="month">表示する月</label><input type="month" id="month"></div><div><label for="period">集計期間</label><select id="period"><option value="month">指定月</option><option value="year">指定年全体</option><option value="all">すべて</option></select></div></div>
+    <label for="filter">経費科目で絞り込み</label><select id="filter"><option value="">すべての科目</option></select>
+    <div id="breakdown" style="margin-top:16px"></div>
+    <div class="actions"><button id="csv" type="button" class="secondary">CSV出力</button><button id="xlsx" type="button" class="secondary">Excel出力（xlsx）</button></div>
+    <p class="hint">日付・支払先・科目・購入内容・支払方法・税率・税額・事業使用割合・経費計上額・メモを出力します。CSVはExcelでも開けます。</p>
+  </section>
+  <section class="panel"><h2>🧾 保存した領収書</h2><div id="entries"></div></section>
+  <section class="panel"><h2>💾 バックアップと復元</h2>
+    <p class="hint"><strong>アップデート前や機種変更前はバックアップ推奨。</strong> 写真も含めてJSONに書き出します。データはGitHubではなく今使っているiPhone内に保存されます。Safariやホーム画面アプリのデータを削除すると消える場合があります。</p>
+    <div class="actions"><button class="secondary" id="backup" type="button">バックアップを作成</button><button class="ghost" id="restore" type="button">バックアップから復元</button><input type="file" id="restoreFile" accept="application/json,.json" class="hidden"></div>
+  </section>
+</div>
+<footer>無料・個人利用向け。読み取り結果、経費科目、税率・税額、事業使用割合はご自身で確認してください。このアプリは電子帳簿保存法への適合を保証しません。紙の領収書は保管してください。</footer>
+<script src="app.js"></script>
+</body>
+</html>

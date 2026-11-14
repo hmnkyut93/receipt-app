@@ -1,1 +1,5 @@
-const CACHE='receipt-ledger-v1';self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['./','./index.html','./app.js','./manifest.webmanifest','./icon.svg']))));self.addEventListener('fetch',e=>{if(new URL(e.request.url).origin===location.origin)e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)))});
+const CACHE='receipt-ledger-v3-20261114';
+const RESOURCES=['./','./index.html','./app.js','./manifest.webmanifest','./icon.svg','./icon.png'];
+self.addEventListener('install', event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(RESOURCES)).then(()=>self.skipWaiting()));});
+self.addEventListener('activate', event=>{event.waitUntil((async()=>{for(const key of await caches.keys()){if(key.startsWith('receipt-ledger-')&&key!==CACHE)await caches.delete(key)}await self.clients.claim();})());});
+self.addEventListener('fetch',event=>{if(event.request.method!=='GET')return;const url=new URL(event.request.url);if(url.origin!==self.location.origin||!url.pathname.startsWith(new URL(self.registration.scope).pathname))return;event.respondWith((async()=>{try{const res=await fetch(event.request);if(res.ok){const cache=await caches.open(CACHE);await cache.put(event.request,res.clone())}return res}catch(e){return (await caches.match(event.request))||Response.error()}})());});
