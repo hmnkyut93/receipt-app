@@ -1,0 +1,8 @@
+/index.html
+  Cache-Control: no-cache, must-revalidate
+/manifest.webmanifest
+  Cache-Control: no-cache, must-revalidate
+/icon.png
+  Cache-Control: no-cache, must-revalidate
+/apple-touch-icon.png
+  Cache-Control: no-cache, must-revalidate
