@@ -1,5 +1,5 @@
-const CACHE='receipt-ledger-v6-iphone-icon-20261114';
-const RESOURCES=['./','./index.html','./app.js','./manifest.webmanifest','./apple-touch-icon-2026.png','./apple-touch-icon.png','./icon-192-v6.png','./icon-512-v6.png','./favicon-v6.png','./install-icon.html'];
+const CACHE='receipt-ledger-v7-ocr-crop-20261114';
+const RESOURCES=['./','./index.html','./app.js?v=3-ocr','./manifest.webmanifest','./apple-touch-icon-2026.png','./apple-touch-icon.png','./icon-192-v6.png','./icon-512-v6.png','./favicon-v6.png','./install-icon.html'];
 self.addEventListener('install', event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(RESOURCES)).then(()=>self.skipWaiting()));});
 self.addEventListener('activate', event=>{event.waitUntil((async()=>{for(const key of await caches.keys()){if(key.startsWith('receipt-ledger-')&&key!==CACHE)await caches.delete(key)}await self.clients.claim();})());});
 self.addEventListener('fetch',event=>{if(event.request.method!=='GET')return;const url=new URL(event.request.url);if(url.origin!==self.location.origin||!url.pathname.startsWith(new URL(self.registration.scope).pathname))return;event.respondWith((async()=>{try{const res=await fetch(event.request);if(res.ok){const cache=await caches.open(CACHE);await cache.put(event.request,res.clone())}return res}catch(e){return (await caches.match(event.request))||Response.error()}})());});

@@ -14,6 +14,10 @@
 <meta name="apple-mobile-web-app-title" content="レシート帳">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>
+.cropPanel{padding:12px;margin:11px 0;border:1px solid #b6d9cc;border-radius:13px;background:#f5faf8}
+#cropCanvas{display:block;max-width:100%;height:auto;touch-action:none;user-select:none;-webkit-user-select:none;margin:6px auto 10px;border:1px solid #b4cac1;border-radius:9px}
+#cropCanvas:active{cursor:crosshair}
+
 :root{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','Hiragino Kaku Gothic ProN',sans-serif;color:#20322d;background:#f3f7f5;font-size:15px}
 *{box-sizing:border-box}body{margin:0}header{background:#136b59;color:#fff;padding:22px 16px 18px}header>div{max-width:860px;margin:auto}h1{font-size:24px;margin:0 0 3px}h2{font-size:18px;margin:0 0 12px}header p{font-size:12px;margin:0;opacity:.85}
 .wrap{max-width:860px;margin:auto;padding:14px 13px 30px}.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:12px}.stat,.panel,.entry{border:1px solid #e2e9e5;background:white;border-radius:15px;padding:15px;box-shadow:0 1px 3px #0d30210a}.stat span{color:#61736a;font-size:12px}.stat strong{display:block;margin:6px 0 2px;font-size:23px;white-space:nowrap}.stat em{font-style:normal;font-size:11px;color:#708078}.panel{margin-bottom:13px}
@@ -27,7 +31,7 @@ footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line
 </style>
 </head>
 <body>
-<header><div><h1>🧾 レシート帳 <span style="font-size:12px;font-weight:500;opacity:.8">v2</span></h1><p>領収書の撮影・仕分け・月別集計｜データはこの端末に保存</p></div></header>
+<header><div><h1>🧾 レシート帳 <span style="font-size:12px;font-weight:500;opacity:.8">v3</span></h1><p>領収書の撮影・仕分け・月別集計｜データはこの端末に保存</p></div></header>
 <div class="wrap">
   <div class="stats">
     <div class="stat"><span id="totalLabel">表示期間の経費</span><strong id="total">¥0</strong><em id="totalPaid">支払総額 ¥0</em></div>
@@ -38,9 +42,16 @@ footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line
     <label for="photo">領収書を撮る・写真から選ぶ</label>
     <input id="photo" type="file" accept="image/*" capture="environment">
     <img id="preview" alt="選んだ領収書の写真">
+    <div class="actions"><button type="button" id="cropStart" class="secondary">✂️ 領収書だけを囲んで読み取る</button><button type="button" id="cropReset" class="ghost hidden">切り抜きを取り消す</button></div>
+    <section id="cropPanel" class="hidden cropPanel">
+      <p class="hint"><b>指で領収書の左上から右下まで囲んでね。</b> 机や背景を除くと小さな文字を読み取りやすくなるよ。<br>切り抜くのは読み取り用だけ。保存する領収書の写真は元の画像のまま。</p>
+      <canvas id="cropCanvas" aria-label="領収書の切り抜き範囲を選択"></canvas>
+      <div class="actions"><button type="button" id="cropApply">この範囲を使う</button><button type="button" id="cropCancel" class="secondary">閉じる</button></div>
+    </section>
+    <p class="hint">写真に机や周囲が大きく写っていると、店名や日付が誤認識されやすくなります。先に「領収書だけを囲んで読み取る」を使うのがおすすめ。</p>
     <div class="grid"><div><label for="ocrMode">文字読み取りモード</label><select id="ocrMode"><option value="high">高精度（画像補正して2回解析）</option><option value="fast">高速（1回解析）</option></select></div><div><label for="rotation">画像の回転</label><select id="rotation"><option value="0">そのまま</option><option value="90">右へ90°</option><option value="180">180°</option><option value="270">左へ90°</option></select></div></div>
     <div class="actions"><button id="ocr" type="button">🔍 写真から自動入力</button><button class="secondary" id="clear" type="button">入力をクリア</button></div>
-    <p class="hint">端末内で画像を明るく補正し、日本語＋英語の文字認識をします。高精度は処理が長めです。初回の認識モデル取得には通信が必要で、結果は必ず目視確認してください。</p>
+    <p class="hint">iPhone内で日本語＋英語の文字認識を実施。高精度モードは複数の画像処理で認識します。店名や日付が不明な場合は空欄にします。必ず領収書の原本と照合してから保存してください。</p>
     <div id="notice" role="status" aria-live="polite"></div>
     <details id="ocrDetails"><summary>読み取った文字を確認</summary><pre id="ocrText">まだ解析していません。</pre></details>
     <div class="sectionTitle">基本情報</div>
@@ -69,6 +80,6 @@ footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line
   </section>
 </div>
 <footer>無料・個人利用向け。読み取り結果、経費科目、税率・税額、事業使用割合はご自身で確認してください。このアプリは電子帳簿保存法への適合を保証しません。紙の領収書は保管してください。</footer>
-<script src="app.js"></script>
+<script src="app.js?v=3-ocr"></script>
 </body>
 </html>

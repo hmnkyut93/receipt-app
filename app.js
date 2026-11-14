@@ -1,7 +1,7 @@
 'use strict';
-/* レシート帳 v2 — local-first, no receipt upload to a server. */
+/* レシート帳 v3 — local-first OCR quality update; no receipt upload. */
 const $=id=>document.getElementById(id);
-let db, all=[], selectedFile=null, selectedUrl=null, editId=null;
+let db, all=[], selectedFile=null, selectedUrl=null, editId=null, cropBox=null, cropImg=null, cropDraft=null, cropDragging=false;
 const DEFAULT_CATEGORIES=['未分類','消耗品費','旅費交通費','通信費','車両費','駐車場代','ガソリン代','高速道路料金','会議費','接待交際費','広告宣伝費','新聞図書費','水道光熱費','地代家賃','支払手数料','保険料','租税公課','修繕費','外注工賃','仕入高','荷造運賃','研修費','諸会費','福利厚生費','減価償却費','雑費','その他'];
 const CATEGORY_KEY='receipt-ledger-custom-categories-v2';
 const $field=id=>($(id).value||'').trim();
@@ -26,11 +26,11 @@ async function refresh(){all=await getAll();fillCategories();render()}
 function loadScript(src){return new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=src;script.onload=resolve;script.onerror=()=>reject(Error('ネットワーク上の認識ライブラリを読み込めませんでした'));document.head.append(script)})}
 function toDataUrl(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(r.error);r.readAsDataURL(file)})}
 function decodeImage(file){return new Promise((resolve,reject)=>{const img=new Image();const url=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(url);resolve(img)};img.onerror=()=>{URL.revokeObjectURL(url);reject(Error('画像を開けません。JPEGまたはPNG形式にして再度お試しください'))};img.src=url})}
-function canvasForImage(img,rotation){let w=img.naturalWidth,h=img.naturalHeight;const s=Math.min(2,2600/Math.max(w,h),Math.max(1,1200/Math.min(w,h)));const cw=Math.max(1,Math.round(w*s)),ch=Math.max(1,Math.round(h*s));const rotated=rotation%180!==0;const c=document.createElement('canvas');c.width=rotated?ch:cw;c.height=rotated?cw:ch;const ctx=c.getContext('2d',{willReadFrequently:true});ctx.save();ctx.translate(c.width/2,c.height/2);ctx.rotate(rotation*Math.PI/180);ctx.drawImage(img,-cw/2,-ch/2,cw,ch);ctx.restore();return c}
+function canvasForImage(img,rotation){let w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;const s=Math.min(3,3000/Math.max(w,h),Math.max(1,1100/Math.min(w,h)));const cw=Math.max(1,Math.round(w*s)),ch=Math.max(1,Math.round(h*s));const rotated=rotation%180!==0;const c=document.createElement('canvas');c.width=rotated?ch:cw;c.height=rotated?cw:ch;const ctx=c.getContext('2d',{willReadFrequently:true});ctx.save();ctx.translate(c.width/2,c.height/2);ctx.rotate(rotation*Math.PI/180);ctx.drawImage(img,-cw/2,-ch/2,cw,ch);ctx.restore();return c}
 function canvasPagesForOcr(img,rotation){
  // Very long receipts become unreadable when the whole image is shrunk to a small width.
  // Read such photos in overlapping, full-resolution bands instead.
- const w=img.naturalWidth,h=img.naturalHeight;
+ const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
  if(rotation!==0 || h/w<2.8)return [canvasForImage(img,rotation)];
  const scale=Math.min(2.2,Math.max(1,1100/w));
  const bandHeight=Math.round(2100/scale),overlap=Math.round(90/scale),step=Math.max(200,bandHeight-overlap);
@@ -54,8 +54,41 @@ function enhancedCanvas(original){const c=document.createElement('canvas');c.wid
 function canvasToDataUrl(c){try{return c.toDataURL('image/jpeg',.79)}catch{return null}}
 async function compactPhoto(file){try{const img=await decodeImage(file);const s=img.naturalHeight/img.naturalWidth>2.8?Math.min(1,6500/img.naturalHeight):Math.min(1,2200/Math.max(img.naturalWidth,img.naturalHeight));const c=document.createElement('canvas');c.width=Math.max(1,Math.round(img.naturalWidth*s));c.height=Math.max(1,Math.round(img.naturalHeight*s));c.getContext('2d').drawImage(img,0,0,c.width,c.height);return canvasToDataUrl(c)||await toDataUrl(file)}catch{return await toDataUrl(file)}}
 function setPreview(url){$('preview').style.display=url?'block':'none';if(url)$('preview').src=url;else $('preview').removeAttribute('src')}
-$('photo').addEventListener('change',e=>{if(selectedUrl)URL.revokeObjectURL(selectedUrl);selectedFile=e.target.files[0]||null;selectedUrl=selectedFile?URL.createObjectURL(selectedFile):null;setPreview(selectedUrl)});
-function resetForm(){selectedFile=null;editId=null;if(selectedUrl)URL.revokeObjectURL(selectedUrl);selectedUrl=null;$('photo').value='';setPreview(null);$('date').value=localDate();$('amount').value='';$('store').value='';$('detail').value='';$('category').value='未分類';$('payment').value='未設定';$('taxRate').value='';$('taxAmount').value='';$('businessRate').value='100';$('invoiceNo').value='';$('memo').value='';$('rotation').value='0';$('ocrText').textContent='まだ解析していません。';$('save').textContent='💾 領収書を保存する';updateBusinessEstimate()}
+function cropImageSource(img,box){
+ if(!box)return img;
+ const c=document.createElement('canvas'); c.width=Math.max(1,Math.round(box.w));c.height=Math.max(1,Math.round(box.h));
+ c.getContext('2d',{willReadFrequently:true}).drawImage(img,box.x,box.y,box.w,box.h,0,0,c.width,c.height);
+ return c;
+}
+function resetCrop(){cropBox=null;cropDraft=null;cropImg=null;$('cropPanel').classList.add('hidden');$('cropReset').classList.add('hidden')}
+$('photo').addEventListener('change',e=>{if(selectedUrl)URL.revokeObjectURL(selectedUrl);selectedFile=e.target.files[0]||null;selectedUrl=selectedFile?URL.createObjectURL(selectedFile):null;resetCrop();setPreview(selectedUrl)});
+function cropPt(ev){const c=$('cropCanvas'),rect=c.getBoundingClientRect();return {x:clamp((ev.clientX-rect.left)*c.width/rect.width,0,c.width),y:clamp((ev.clientY-rect.top)*c.height/rect.height,0,c.height)}}
+function cropRectFromPoints(a,b){const x=Math.min(a.x,b.x),y=Math.min(a.y,b.y);return {x,y,w:Math.abs(b.x-a.x),h:Math.abs(b.y-a.y)}}
+function paintCrop(){if(!cropImg)return;const c=$('cropCanvas'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);ctx.drawImage(cropImg,0,0,c.width,c.height);
+ if(cropDraft&&cropDraft.w>=5&&cropDraft.h>=5){const r=cropDraft;
+  ctx.fillStyle='rgba(3,16,12,.43)';ctx.fillRect(0,0,c.width,r.y);ctx.fillRect(0,r.y,r.x,r.h);ctx.fillRect(r.x+r.w,r.y,c.width-r.x-r.w,r.h);ctx.fillRect(0,r.y+r.h,c.width,c.height-r.y-r.h);
+  ctx.lineWidth=3;ctx.strokeStyle='#17e6aa';ctx.strokeRect(r.x+1,r.y+1,r.w-2,r.h-2);
+ }
+}
+let cropAnchor=null;
+$('cropStart').onclick=async()=>{if(!selectedFile){notice('先に領収書の写真を選んでね');return}
+ try{cropImg=await decodeImage(selectedFile);const c=$('cropCanvas');const s=Math.min(1,680/cropImg.naturalWidth,850/cropImg.naturalHeight);c.width=Math.max(1,Math.round(cropImg.naturalWidth*s));c.height=Math.max(1,Math.round(cropImg.naturalHeight*s));
+  cropDraft=null;$('cropPanel').classList.remove('hidden');paintCrop();$('cropPanel').scrollIntoView({behavior:'smooth',block:'center'});
+ }catch(e){notice('切り抜き画面を開けませんでした：'+e.message)}
+};
+$('cropCanvas').onpointerdown=e=>{if(!cropImg)return;cropDragging=true;cropAnchor=cropPt(e);cropDraft={x:cropAnchor.x,y:cropAnchor.y,w:0,h:0};$('cropCanvas').setPointerCapture(e.pointerId);e.preventDefault()};
+$('cropCanvas').onpointermove=e=>{if(!cropDragging||!cropAnchor)return;cropDraft=cropRectFromPoints(cropAnchor,cropPt(e));paintCrop();e.preventDefault()};
+$('cropCanvas').onpointerup=e=>{if(!cropDragging)return;cropDragging=false;cropDraft=cropRectFromPoints(cropAnchor,cropPt(e));paintCrop();e.preventDefault()};
+$('cropCanvas').onpointercancel=()=>{cropDragging=false};
+$('cropApply').onclick=()=>{if(!cropImg||!cropDraft||cropDraft.w<25||cropDraft.h<20){notice('領収書の四隅を指で囲んで範囲を選択してください');return}
+ const canvas=$('cropCanvas'),sx=cropImg.naturalWidth/canvas.width,sy=cropImg.naturalHeight/canvas.height;
+ cropBox={x:Math.round(cropDraft.x*sx),y:Math.round(cropDraft.y*sy),w:Math.round(cropDraft.w*sx),h:Math.round(cropDraft.h*sy)};
+ const preview=cropImageSource(cropImg,cropBox);setPreview(preview.toDataURL('image/jpeg',.88));preview.width=0;preview.height=0;
+ $('cropReset').classList.remove('hidden');$('cropPanel').classList.add('hidden');notice('領収書だけ切り抜いたよ。次に「写真から自動入力」を押してね。元の写真はそのまま保存されるよ。')
+};
+$('cropCancel').onclick=()=>{$('cropPanel').classList.add('hidden')};
+$('cropReset').onclick=()=>{resetCrop();setPreview(selectedUrl);notice('切り抜きを取り消しました')};
+function resetForm(){selectedFile=null;editId=null;resetCrop();if(selectedUrl)URL.revokeObjectURL(selectedUrl);selectedUrl=null;$('photo').value='';setPreview(null);$('date').value=localDate();$('amount').value='';$('store').value='';$('detail').value='';$('category').value='未分類';$('payment').value='未設定';$('taxRate').value='';$('taxAmount').value='';$('businessRate').value='100';$('invoiceNo').value='';$('memo').value='';$('rotation').value='0';$('ocrText').textContent='まだ解析していません。';$('save').textContent='💾 領収書を保存する';updateBusinessEstimate()}
 $('clear').onclick=()=>{resetForm();notice('入力をクリアしました')};
 function updateBusinessEstimate(){let v=Number($('businessRate').value);if(!Number.isFinite(v))v=100;v=clamp(v,0,100);$('businessAmount').textContent=`経費計上の目安：${money(businessAmount($('amount').value,v))}（事業使用割合${v}%）`}
 $('amount').addEventListener('input',updateBusinessEstimate);$('businessRate').addEventListener('input',updateBusinessEstimate);
@@ -65,7 +98,7 @@ $('addCategory').onclick=()=>{const value=$field('customCategory');if(!value){no
 const normalizeText=t=>String(t||'').normalize('NFKC').replace(/[￥﹩]/g,'¥').replace(/(?<=\d)[.．](?=\d{3}(?:\D|$))/g,',').replace(/\r/g,'');
 function validDate(year,month,day){const d=new Date(year,month-1,day);return d.getFullYear()===year&&d.getMonth()===month-1&&d.getDate()===day&&year>=2000&&year<=2100}
 function findDate(lines){const now=new Date();const list=[];for(let i=0;i<lines.length;i++){
- let s=lines[i];const dateLabel=/(領収日|発行日|購入日|取引日|お買い上げ日|お買上日|利用日|売上日|日時|DATE|購入日時)/i.test(s);
+ let s=lines[i].replace(/(?<=\d)\s+(?=\d)/g,'').replace(/[年月日]\s+/g,m=>m.trim());const dateLabel=/(領収日|発行日|購入日|取引日|お買い上げ日|お買上日|利用日|売上日|日時|DATE|購入日時)/i.test(s);
  const patterns=[{r:/(20\d{2})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})\s*日?/g,type:'full'},
  {r:/(?:令和|R)\s*(\d{1,2})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})/gi,type:'reiwa'},
  {r:/(?:^|\D)(\d{2})\s*[/\-.]\s*(\d{1,2})\s*[/\-.]\s*(\d{1,2})(?=\D|$)/g,type:'short'},
@@ -93,8 +126,28 @@ function findAmount(lines){const candidates=[];
   if(goodHit&&!vals.length&&i+1<lines.length){for(const token of numericValues(lines[i+1]))candidates.push({value:token.value,score:100+(token.yen?10:0),why:line+' / '+lines[i+1]})}
  }
  const best=candidates.sort((a,b)=>b.score-a.score||b.value-a.value)[0];return best&&best.score>=6?best:null}
-function findStore(lines){const banned=/(領収書|レシート|お買上|お買い上げ|売上票|RECEIPT|明細|消費税|登録番号|インボイス|合計|小計|電話|TEL|FAX|〒|税抜|税込|¥|\d{2,}[,]\d{3}|ポイント|ご利用|お問い合わせ|いつも|ありがとう|カード|会員|現金|お釣|NO[.:])/i;
- const candidates=[];lines.slice(0,12).forEach((line,i)=>{let x=line.replace(/^[*#●\s]+/,'').replace(/\s+/g,' ').trim();if(x.length<2||x.length>60||banned.test(x)||/^\d/.test(x)||/\d{2}[:/.-]\d{2}/.test(x)||/^https?:/i.test(x))return;const kana=(x.match(/[ぁ-んァ-ヶ一-龥a-zA-Z]/g)||[]).length;const ratio=kana/x.length;if(ratio<.5)return;const score=45-i*5+(x.length>=4&&x.length<=28?12:0)+(/(株式会社|有限会社|店|ストア|商店|薬局|スーパー|マーケット|カフェ|駐車場|石油)/.test(x)?12:0)-(/^(住所|大阪|東京都|都道府県)/.test(x)?8:0);candidates.push({value:x,score})});return candidates.sort((a,b)=>b.score-a.score)[0]||null}
+function findStore(lines){
+ // Do not invent store names from random fragments of the photo background.
+ const banned=/(領収書|レシート|お買上|お買い上げ|売上票|RECEIPT|明細|消費税|登録番号|インボイス|合計|小計|電話|TEL|FAX|〒|税抜|税込|¥|金額|ポイント|ご利用|お問い合せ|お問い合わせ|ありがとう|カード|会員|現金|お釣|NO[.:]|印紙|免税|保存上のお願い|枚数|担当者|伝票)/i;
+ const candidates=[];
+ lines.slice(0,60).forEach((line,i)=>{
+  const x=line.replace(/^[*#●\s]+/,'').replace(/\s+/g,' ').trim();
+  if(x.length<3||x.length>48||banned.test(x)||/^\d/.test(x)||/\d{2}[:/.-]\d{2}/.test(x)||/https?:|@/.test(x))return;
+  const japanese=(x.match(/[ぁ-んァ-ヶ一-龥a-zA-Z]/g)||[]).length;
+  if(japanese/x.length<.65)return;
+  const branch=/(?:店|支店|営業所|センター|会館|ホテル|ショップ|モール)\s*$/.test(x);
+  const company=/(株式会社|有限会社|合同会社|合同事務所|商事|商会|企業|カンパニー)/.test(x);
+  const named=/(ビッグウッド|マート|ストア|スーパー|ドラッグ|ファミリー|ファミマ|ローソン|セブン|ENEOS|イオン|DCM|コーナン|ダイソー)/i.test(x);
+  // Business suffix is required unless the image clearly contains a known business word.
+  if(!branch&&!company&&!named)return;
+  let score=32+(branch?55:0)+(company?34:0)+(named?18:0)+(x.length>=4&&x.length<=24?12:0)-Math.min(i,25)*.7;
+  if(/^[^\s]+(市|区|町|丁目|番地|号)/.test(x))score-=24;
+  if(/T\d{8,}|\d{5,}|\d{2,}[-‐]\d+/.test(x))score-=40;
+  if((x.match(/[をにのはへでがを]/g)||[]).length>=5)score-=40;
+  candidates.push({value:x,score});
+ });
+ return candidates.sort((a,b)=>b.score-a.score)[0]||null;
+}
 function findTax(lines){const cand=[];for(let i=0;i<lines.length;i++){const line=lines[i];if(!/(消費税額|内消費税|消費税|税額|内税)/.test(line)||/(税率|税率別)/.test(line)&&!/(消費税額|税額)/.test(line))continue;const v=numericValues(line).filter(x=>x.value>=1);for(const n of v)cand.push({value:n.value,score:(/(消費税額|内消費税|税額)/.test(line)?80:50)+(n.yen?8:0)-i});}
  if(cand.length>=2){
   const values=[...new Set(cand.map(x=>x.value))];
@@ -108,43 +161,55 @@ function findTaxRate(text){const t=normalizeText(text);if(/(?:10\s*%|10パーセ
 function suggestCategory(text){const t=normalizeText(text).toLowerCase();const rules=[[/駐車場|パーキング|駐車料金|タイムズ|リパーク/,'駐車場代'],[/ガソリン|軽油|ハイオク|レギュラー|apollostation|eneos|出光/,'ガソリン代'],[/高速料金|通行料金|etc\s*利用/,'高速道路料金'],[/タクシー|鉄道|交通費|電車|新幹線|乗車|バス乗車|切符/,'旅費交通費'],[/切手|郵送|送料|宅配|ヤマト運輸|佐川急便/,'荷造運賃'],[/携帯電話|インターネット料金|光回線|モバイル通信/,'通信費'],[/印刷|コピー用紙|文房具|筆記具|事務用品/,'消耗品費'],[/書籍|参考書|新聞代/,'新聞図書費'],[/講習|研修参加|セミナー/,'研修費'],[/広告費|宣伝費/,'広告宣伝費']];for(const [re,val] of rules){if(re.test(t))return {value:val,score:40}}return null}
 function parseReceipt(text){const normalized=normalizeText(text);const lines=normalized.split(/\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
  const fields={date:findDate(lines),amount:findAmount(lines),store:findStore(lines),taxAmount:findTax(lines),invoiceNo:findInvoice(normalized),payment:findPayment(normalized),taxRate:findTaxRate(normalized),category:suggestCategory(normalized)};
- if(fields.taxAmount&&fields.amount&&fields.taxAmount.value>fields.amount.value)fields.taxAmount=null;
+ if(fields.taxAmount&&fields.amount){
+ const tax=fields.taxAmount.value,total=fields.amount.value;
+ if(tax>total || tax<total*.012 || tax>total*.17){fields.taxAmount=null}
+ }
  return {fields,raw:normalized};}
 function mergeFields(one,two){const data={};for(const field of ['date','amount','store','taxAmount','invoiceNo','payment','taxRate','category']){
  const a=one?.fields[field],b=two?.fields[field];data[field]=a&&b?(a.score>=b.score?a:b):(a||b||null)}return data}
 $('ocr').onclick=async()=>{
  if(!selectedFile){notice('先に領収書の写真を選んでください');return}
  const btn=$('ocr');btn.disabled=true;btn.textContent='解析中…';let worker;
+ let pages=[];
  try{
   const img=await decodeImage(selectedFile),rotation=Number($('rotation').value)||0;
-  const pages=canvasPagesForOcr(img,rotation);notice('文字認識の準備をしています…');
+  // Prefer explicit receipt-region crop over full background.
+  const source=cropImageSource(img,cropBox);pages=canvasPagesForOcr(source,rotation);
+  notice('文字認識の準備をしています…');
   if(!window.Tesseract)await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
-  worker=await Tesseract.createWorker('jpn+eng',1,{logger:msg=>{if(msg.status==='recognizing text')notice(`文字認識中：${Math.round(msg.progress*100)}%\n完了後、金額や日付を必ず確認してね。`)}});
-  await worker.setParameters({preserve_interword_spaces:'1'});
-  notice('通常画像の文字を解析しています…');
-  const rawOne=[];for(let i=0;i<pages.length;i++){
-   notice(`通常画像を解析中（${i+1}/${pages.length}ページ）…`);
+  worker=await Tesseract.createWorker('jpn+eng',1,{logger:msg=>{if(msg.status==='recognizing text')notice(`文字認識中：${Math.round(msg.progress*100)}%\n完了後、金額・日付・店名を確認してね。`)}});
+  await worker.setParameters({preserve_interword_spaces:'1',tessedit_pageseg_mode:'11'});
+  const rawOne=[];
+  for(let i=0;i<pages.length;i++){
+   notice(`領収書の文字を読み取り中（${i+1}/${pages.length}）…`);
    rawOne.push((await worker.recognize(pages[i])).data.text);
   }
   const first=parseReceipt(rawOne.join('\n'));
-  let second=null;if($('ocrMode').value==='high'){
-   const rawTwo=[];for(let i=0;i<pages.length;i++){
-    notice(`画像補正後を再解析中（${i+1}/${pages.length}ページ）…`);
+  let second=null;
+  if($('ocrMode').value==='high'){
+   await worker.setParameters({tessedit_pageseg_mode:'6'});
+   const rawTwo=[];
+   for(let i=0;i<pages.length;i++){
+    notice(`補正した画像を再解析中（${i+1}/${pages.length}）…`);
     const enhanced=enhancedCanvas(pages[i]);rawTwo.push((await worker.recognize(enhanced)).data.text);
     enhanced.width=0;enhanced.height=0;
    }
    second=parseReceipt(rawTwo.join('\n'));
   }
-  for(const page of pages){page.width=0;page.height=0;}
-  const data=mergeFields(first,second);for(const key of ['date','amount','store','taxAmount','invoiceNo','payment','taxRate','category']){
-   if(!data[key])continue;const id=key; if($(id))$(id).value=data[key].value;
-  }
+  const data=mergeFields(first,second);
+  // Never allow the initial value (today) or a previous scan's values to masquerade as OCR results.
+  for(const key of ['date','amount','store','taxAmount','invoiceNo'])$(key).value=data[key]?.value??'';
+  for(const key of ['payment','taxRate'])$(key).value=data[key]?.value??(key==='payment'?'未設定':'');
+  $('category').value=data.category?.value||'未分類';
   $('ocrText').textContent=first.raw+(second?'\n\n===== 補正画像の認識結果 =====\n'+second.raw:'');
-  updateBusinessEstimate();const missing=[];if(!data.date)missing.push('日付');if(!data.amount)missing.push('金額');if(!data.store)missing.push('店名');
-  const amountNote=data.amount&&data.amount.score<70?'※金額候補があいまいです。':'';
-  notice(`読み取り完了。${missing.length?'未認識：'+missing.join('・')+'。':'主要項目を入力しました。'}${amountNote}\n「小計・お釣り・税額」と間違っていないか、原本と照らし合わせて保存してください。`);
- }catch(e){notice('読み取りできませんでした：'+(e.message||e)+'\n画像を明るく撮り直すか、手入力してください。')}
- finally{if(worker)try{await worker.terminate()}catch{}btn.disabled=false;btn.textContent='🔍 写真から自動入力'}
+  updateBusinessEstimate();
+  const missing=[];if(!data.date)missing.push('日付');if(!data.amount)missing.push('金額');if(!data.store)missing.push('店名');
+  const unresolved=missing.length?'未認識：'+missing.join('・')+'。':'主要3項目を入力しました。';
+  const help=!cropBox?'\n背景が多い写真は「領収書だけを囲んで読み取る」を使うと改善することがあります。':'';
+  notice('読み取り完了。'+unresolved+help+'\n日付が取れない場合は空欄にしています。間違った値がないか原本で確認してね。');
+ }catch(e){notice('読み取りできませんでした：'+(e.message||e)+'\n写真を明るく撮る・領収書部分を囲む・手入力を試してください。')}
+ finally{for(const page of pages){page.width=0;page.height=0}if(worker)try{await worker.terminate()}catch{}btn.disabled=false;btn.textContent='🔍 写真から自動入力'}
 };
 function filtered(){const month=$('month').value,period=$('period').value,c=$('filter').value;return all.filter(x=>{const date=String(x.date||'');const inPeriod=period==='all'||(period==='year'?date.startsWith(month.slice(0,4)):date.startsWith(month));return inPeriod&&(!c||x.category===c)}).sort((a,b)=>String(b.date).localeCompare(String(a.date)))}
 function render(){const rows=filtered();const paid=rows.reduce((n,x)=>n+Number(x.amount||0),0),expensed=rows.reduce((n,x)=>n+businessAmount(x.amount,x.businessRate==null?100:x.businessRate),0);
@@ -164,7 +229,7 @@ function render(){const rows=filtered();const paid=rows.reduce((n,x)=>n+Number(x
   const del=document.createElement('button');del.className='danger';del.textContent='削除';del.onclick=async()=>{if(confirm('この領収書を削除してよいですか？')){await deleteItem(x.id);await refresh()}};action.append(edit,del);right.append(amount,action);row.append(img,main,right);$('entries').append(row)
  }
 }
-function editReceipt(x){editId=x.id;selectedFile=null;if(selectedUrl)URL.revokeObjectURL(selectedUrl);selectedUrl=null;$('photo').value='';for(const key of ['date','amount','store','detail','category','payment','taxRate','taxAmount','invoiceNo','memo']){
+function editReceipt(x){editId=x.id;selectedFile=null;resetCrop();if(selectedUrl)URL.revokeObjectURL(selectedUrl);selectedUrl=null;$('photo').value='';for(const key of ['date','amount','store','detail','category','payment','taxRate','taxAmount','invoiceNo','memo']){
  if($(key))$(key).value=x[key]??(key==='payment'?'未設定':'')}
  $('businessRate').value=x.businessRate==null?100:x.businessRate;setPreview(x.photo||null);$('save').textContent='💾 変更を保存する';updateBusinessEstimate();window.scrollTo({top:0,behavior:'smooth'});notice('編集中です。写真を変更しなければ元の領収書画像は維持されます')}
 $('save').onclick=async()=>{if(!db){notice('データベースが利用できません');return}const date=$field('date'),amount=Number($field('amount')),store=$field('store'),rate=Number($field('businessRate'));
