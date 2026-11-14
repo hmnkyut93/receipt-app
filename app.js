@@ -1,13 +1,26 @@
 'use strict';
-/* レシート帳 v3 — local-first OCR quality update; no receipt upload. */
+/* レシート帳 v10 — batch OCR review, confidence hints, backup reminders, advanced search and reports. Data stays local. */
 const $=id=>document.getElementById(id);
-let db, all=[], selectedFile=null, selectedUrl=null, editId=null, cropBox=null, cropImg=null, cropDraft=null, cropDragging=false;
-const DEFAULT_CATEGORIES=['未分類','消耗品費','旅費交通費','通信費','車両費','駐車場代','ガソリン代','高速道路料金','会議費','接待交際費','広告宣伝費','新聞図書費','水道光熱費','地代家賃','支払手数料','保険料','租税公課','修繕費','外注工賃','仕入高','荷造運賃','研修費','諸会費','福利厚生費','減価償却費','雑費','その他'];
+let db, all=[], selectedFile=null, selectedUrl=null, editId=null, cropBox=null, cropImg=null, cropDraft=null, cropDragging=false, lastOcrData=null, batchActiveIndex=null;
+const DEFAULT_CATEGORIES=['未分類','消耗品費','印刷製本費','旅費交通費','通信費','車両費','駐車場代','ガソリン代','高速道路料金','会議費','接待交際費','広告宣伝費','新聞図書費','水道光熱費','地代家賃','支払手数料','保険料','租税公課','修繕費','外注工賃','仕入高','荷造運賃','研修費','諸会費','福利厚生費','減価償却費','雑費','その他'];
 const CATEGORY_KEY='receipt-ledger-custom-categories-v2';
 const $field=id=>($(id).value||'').trim();
 const localDate=()=>{const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-')};
 const money=n=>'¥'+Number(n||0).toLocaleString('ja-JP');
 const notice=s=>{$('notice').style.display='block';$('notice').textContent=s};
+function showSaveStatus(message,kind='error',fieldId=null){
+ const el=$('saveStatus');el.className='saveStatus '+kind;el.style.display='block';el.textContent=message;
+ for(const input of document.querySelectorAll('.input-invalid'))input.classList.remove('input-invalid');
+ if(fieldId&&$(fieldId))$(fieldId).classList.add('input-invalid');
+ el.scrollIntoView({block:'center',behavior:'smooth'});
+}
+function clearSaveStatus(){const el=$('saveStatus');if(!el)return;el.textContent='';el.style.display='none';el.className='saveStatus';for(const x of document.querySelectorAll('.input-invalid'))x.classList.remove('input-invalid')}
+function normalizeInvoiceInput(value){
+ let x=String(value||'').normalize('NFKC').replace(/[\s－―ー‐−–—.-]/g,'').toUpperCase();
+ // The OCR often loses the leading T, but 13 digits alone are also a valid user input format.
+ if(/^\d{13}$/.test(x))x='T'+x;
+ return x;
+}
 const clamp=(x,min,max)=>Math.max(min,Math.min(max,x));
 const businessAmount=(amount,rate)=>Math.round(Number(amount||0)*Number(rate==null?100:rate)/100);
 function getCustomCategories(){try{const a=JSON.parse(localStorage.getItem(CATEGORY_KEY)||'[]');return Array.isArray(a)?a.filter(x=>typeof x==='string'&&x.length<=30):[]}catch{return []}}
@@ -44,6 +57,13 @@ function canvasPagesForOcr(img,rotation){
  // Unusually long images are processed as one complete page rather than silently omitting the bottom.
  if(canvases.length===8&&((8-1)*step+bandHeight)<h)return [canvasForImage(img,rotation)];
  return canvases;
+}
+function headerCanvasForOcr(img,rotation){
+ const c=canvasForImage(img,rotation);const h=Math.max(1,Math.round(c.height*.52));
+ const scale=Math.min(1.7,Math.max(1,1700/Math.max(1,c.width)));
+ const top=document.createElement('canvas');top.width=Math.round(c.width*scale);top.height=Math.round(h*scale);
+ top.getContext('2d',{willReadFrequently:true}).drawImage(c,0,0,c.width,h,0,0,top.width,top.height);
+ c.width=0;c.height=0;return top;
 }
 function enhancedCanvas(original){const c=document.createElement('canvas');c.width=original.width;c.height=original.height;const ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(original,0,0);const im=ctx.getImageData(0,0,c.width,c.height),p=im.data;
  const hist=new Uint32Array(256);for(let i=0;i<p.length;i+=4*9){hist[clamp(Math.round(p[i]*.299+p[i+1]*.587+p[i+2]*.114),0,255)]++}
@@ -88,10 +108,12 @@ $('cropApply').onclick=()=>{if(!cropImg||!cropDraft||cropDraft.w<25||cropDraft.h
 };
 $('cropCancel').onclick=()=>{$('cropPanel').classList.add('hidden')};
 $('cropReset').onclick=()=>{resetCrop();setPreview(selectedUrl);notice('切り抜きを取り消しました')};
-function resetForm(){selectedFile=null;editId=null;resetCrop();if(selectedUrl)URL.revokeObjectURL(selectedUrl);selectedUrl=null;$('photo').value='';setPreview(null);$('date').value=localDate();$('amount').value='';$('store').value='';$('detail').value='';$('category').value='未分類';$('payment').value='未設定';$('taxRate').value='';$('taxAmount').value='';$('businessRate').value='100';$('invoiceNo').value='';$('memo').value='';$('rotation').value='0';$('ocrText').textContent='まだ解析していません。';$('save').textContent='💾 領収書を保存する';updateBusinessEstimate()}
+function resetForm(){clearSaveStatus();lastOcrData=null;batchActiveIndex=null;selectedFile=null;editId=null;resetCrop();if(selectedUrl)URL.revokeObjectURL(selectedUrl);selectedUrl=null;$('photo').value='';setPreview(null);$('date').value=localDate();$('amount').value='';$('store').value='';$('detail').value='';$('category').value='未分類';$('payment').value='未設定';$('taxRate').value='';$('taxAmount').value='';$('businessRate').value='100';$('invoiceNo').value='';$('memo').value='';$('rotation').value='0';$('receiptType').value='その他';$('learnVendor').checked=false;$('invoiceVerified').checked=false;$('reviewed').checked=false;$('ocrEvidence').replaceChildren();$('ocrText').textContent='まだ解析していません。';$('save').textContent='💾 領収書を保存する';updateBusinessEstimate()}
 $('clear').onclick=()=>{resetForm();notice('入力をクリアしました')};
 function updateBusinessEstimate(){let v=Number($('businessRate').value);if(!Number.isFinite(v))v=100;v=clamp(v,0,100);$('businessAmount').textContent=`経費計上の目安：${money(businessAmount($('amount').value,v))}（事業使用割合${v}%）`}
 $('amount').addEventListener('input',updateBusinessEstimate);$('businessRate').addEventListener('input',updateBusinessEstimate);
+$('invoiceNo').addEventListener('blur',()=>{const raw=$field('invoiceNo');if(raw){const normalized=normalizeInvoiceInput(raw);if(/^T\d{13}$/.test(normalized))$('invoiceNo').value=normalized}});
+for(const field of ['date','amount','invoiceNo','taxAmount','businessRate'])$(field).addEventListener('input',()=>{if($('saveStatus').classList.contains('error'))clearSaveStatus()});
 $('addCategory').onclick=()=>{const value=$field('customCategory');if(!value){notice('追加する科目名を入力してください');return}const vals=getCustomCategories();if(!currentCategories().includes(value)){vals.push(value);try{localStorage.setItem(CATEGORY_KEY,JSON.stringify(vals))}catch{notice('科目を保存できませんでした')}}fillCategories();$('category').value=value;$('customCategory').value='';notice(`「${value}」を経費科目に追加しました`)};
 
 // Receipt parser — context-weighted extraction to avoid mixing up tax, change and total.
@@ -105,10 +127,20 @@ function findDate(lines){const now=new Date();const list=[];for(let i=0;i<lines.
  {r:/(20\d{2})(\d{2})(\d{2})(?!\d)/g,type:'compact'}];
  for(const {r,type} of patterns){for(const m of s.matchAll(r)){const year=type==='reiwa'?2018+Number(m[1]):type==='short'?2000+Number(m[1]):Number(m[1]),month=Number(m[2]),day=Number(m[3]);if(!validDate(year,month,day))continue;const d=new Date(year,month-1,day);const diff=Math.abs((now-d)/(86400000));let score=50+(dateLabel?30:0)+(i<8?12:0)-Math.min(diff/365,15);if(d>new Date(now.getTime()+3*86400000))score-=25;list.push({value:`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`,score})}}
  }return list.sort((a,b)=>b.score-a.score)[0]||null}
-function numericValues(s){const out=[];const reg=/([¥]?\s*(?:\d{1,3}(?:,\d{3})+|\d{2,9})\s*円?)/g;for(const m of s.matchAll(reg)){
- const chunk=m[1].replace(/\s/g,'');const n=Number(chunk.replace(/[¥円,]/g,''));if(Number.isFinite(n)&&n>=1&&n<=99999999)out.push({value:n,text:chunk,yen:/[¥円]/.test(chunk),index:m.index||0})}return out}
+function numericValues(s){
+ // A tax component can be only ¥4 (the old version ignored single-digit numbers).
+ // Reject partial matches from long IDs, telephone numbers, and dates.
+ const out=[];
+ const reg=/(?<![\dA-Za-z])([¥]?\s*(?:\d{1,3}(?:,\d{3})+|\d{1,9})\s*円?)(?!\d)/g;
+ for(const m of s.matchAll(reg)){
+  const chunk=m[1].replace(/\s/g,'');
+  const n=Number(chunk.replace(/[¥円,]/g,''));
+  if(Number.isFinite(n)&&n>=1&&n<=99999999)out.push({value:n,text:chunk,yen:/[¥円]/.test(chunk),index:m.index||0});
+ }
+ return out;
+}
 function findAmount(lines){const candidates=[];
- const good=/(総合計|お支払合計|お支払い合計|税込合計|合計金額|領収金額|ご請求額|お買上金額|ご利用金額|お支払金額|今回ご利用額|お買上計|お買い上げ計|現計|合\s*計|TOTAL|AMOUNT\s*DUE)/i;
+ const good=/(総合計|お支払合計|お支払い合計|税込合計|合計金額|領収金額|ご請求額|お買上金額|ご利用金額|お支払金額|現金支払額|現金支払い額|お支払額|今回ご利用額|お買上計|お買い上げ計|現計|合\s*計|TOTAL|AMOUNT\s*DUE)/i;
  const bad=/(お釣|おつり|釣銭|お預り|預り金|現金お預り|小計|消費税|税額|内税|外税|値引|割引|ポイント|クーポン|残高|単価|税抜|T\d{10,}|TEL|電話|領収書NO|レジNO|登録番号)/i;
  for(let i=0;i<lines.length;i++){
   const line=lines[i],goodHit=good.test(line),badHit=bad.test(line),vals=numericValues(line);
@@ -126,7 +158,29 @@ function findAmount(lines){const candidates=[];
   if(goodHit&&!vals.length&&i+1<lines.length){for(const token of numericValues(lines[i+1]))candidates.push({value:token.value,score:100+(token.yen?10:0),why:line+' / '+lines[i+1]})}
  }
  const best=candidates.sort((a,b)=>b.score-a.score||b.value-a.value)[0];return best&&best.score>=6?best:null}
+function condensedShopText(s){return String(s||'').normalize('NFKC').replace(/[‐－ーｰ―—–\s・.:：]/g,'').replace(/７/g,'7')}
+function sevenElevenStore(lines){
+ const top=lines.slice(0,24);
+ const brand=top.some((line,i)=>{
+  const a=condensedShopText(line);
+  const pair=condensedShopText(line+' '+(top[i+1]||''));
+  return /セ[ブプ][ンソ].*?イレ[ブプ][ンソ]/.test(a)||/セ[ブプ][ンソ].*?イレ[ブプ][ンソ]/.test(pair)||/7ELEVEN/i.test(a)||/SEVEN.?ELEVEN/i.test(a)||(/セブン/.test(a)&&/イレブン/.test(pair));
+ });
+ if(!brand)return null; // never infer a 7-Eleven only from branch/address or a tax invoice number
+ const branches=[];
+ for(let i=0;i<Math.min(25,lines.length);i++){
+  let x=String(lines[i]).normalize('NFKC').replace(/\s+/g,'').trim();
+  if(/〒|電話|TEL|登録|インボイス|領収書|202[0-9]|レシート|大阪府|[￥¥]|\d{2}:\d{2}/i.test(x))continue;
+  x=x.replace(/^(セ[ブプ]ン[‐ー-]?イレ[ブプ]ン)[-・\s]*/,'');
+  const match=x.match(/([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\d]{2,26}(?:(?:\d+|[一二三四五六七八九十])丁目)?店)$/u);
+  if(match&&match[1].length<28)branches.push({name:match[1].replace(/^[1-9]*/,'').replace(/(?:店){2,}$/,'店'),score:100-i});
+ }
+ branches.sort((a,b)=>b.score-a.score);
+ return {value:'セブン‐イレブン'+(branches[0]?' '+branches[0].name:''),score:180};
+}
 function findStore(lines){
+ const seven=sevenElevenStore(lines);if(seven)return seven;
+
  // Do not invent store names from random fragments of the photo background.
  const banned=/(領収書|レシート|お買上|お買い上げ|売上票|RECEIPT|明細|消費税|登録番号|インボイス|合計|小計|電話|TEL|FAX|〒|税抜|税込|¥|金額|ポイント|ご利用|お問い合せ|お問い合わせ|ありがとう|カード|会員|現金|お釣|NO[.:]|印紙|免税|保存上のお願い|枚数|担当者|伝票)/i;
  const candidates=[];
@@ -148,26 +202,205 @@ function findStore(lines){
  });
  return candidates.sort((a,b)=>b.score-a.score)[0]||null;
 }
-function findTax(lines){const cand=[];for(let i=0;i<lines.length;i++){const line=lines[i];if(!/(消費税額|内消費税|消費税|税額|内税)/.test(line)||/(税率|税率別)/.test(line)&&!/(消費税額|税額)/.test(line))continue;const v=numericValues(line).filter(x=>x.value>=1);for(const n of v)cand.push({value:n.value,score:(/(消費税額|内消費税|税額)/.test(line)?80:50)+(n.yen?8:0)-i});}
- if(cand.length>=2){
-  const values=[...new Set(cand.map(x=>x.value))];
-  // Multiple tax-rate breakdowns: add clearly distinct tax amounts, but let the user verify.
-  if(values.length===2&&values.every(v=>v<1000000))return {value:values[0]+values[1],score:53};
+function findTax(lines,amount){
+ const candidate=[];
+ const labelRe=/(消費税等|内消費税|内\s*税|消費税額|消費税|税額|税合計|内訳\s*税|\d{1,2}\s*%\s*対象.*税)/i;
+ const negative=/(税抜合計|税込合計|合計金額|小計|お釣り|釣銭|お預り)/;
+ for(let i=0;i<lines.length;i++){
+  const line=lines[i];if(!labelRe.test(line))continue;
+  const labelIndex=line.search(labelRe);
+  const values=numericValues(line).filter(v=>v.value>=1 &&(!amount || v.value<=amount));
+  for(const token of values){
+   // Prefer values printed to the right of the tax label; avoid the '10' from '10%'.
+   if(token.index<labelIndex)continue;
+   if(/\d\s*%/.test(line.slice(Math.max(0,token.index-2),token.index+token.text.length+1)) && token.value<=10)continue;
+   let score=105+(token.yen?12:0)-(negative.test(line)?18:0)-i*.2;
+   if(/(?:内消費税|消費税等|消費税額|内\s*税|税合計)/.test(line))score+=22;
+   if(amount){const ratio=token.value/amount;if(ratio>=.067&&ratio<=.095)score+=25;else if(ratio>.13||ratio<.002)score-=65;}
+   candidate.push({value:token.value,score});
+  }
+  // Some OCR results have the tax amount on the line immediately below the label.
+  if(!values.length&&i+1<lines.length){
+   const n=numericValues(lines[i+1]).filter(v=>v.value>0&&(!amount||v.value<=amount));
+   for(const token of n)candidate.push({value:token.value,score:75+(token.yen?10:0)-i*.2});
+  }
  }
- return cand.sort((a,b)=>b.score-a.score)[0]||null}
-function findInvoice(text){const match=normalizeText(text).replace(/\s/g,'').match(/T\s*\d{13}(?!\d)/i);return match?{value:match[0].toUpperCase(),score:92}:null}
+ const best=candidate.sort((a,b)=>b.score-a.score)[0];return best&&best.score>=30?best:null;
+}
+function fixInvoiceDigits(s){return String(s||'').normalize('NFKC').toUpperCase().replace(/[ＯOo〇○]/g,'0').replace(/[ＩIl|ｌ]/g,'1').replace(/[Ｓs]/g,'5').replace(/[Ｂb]/g,'8').replace(/[Ｚz]/g,'2').replace(/[Ｇg]/g,'6').replace(/[\s,－―ー‐−–—.:・]/g,'')}
+function findInvoice(text){
+ const lines=normalizeText(text).split(/\n/).map(x=>x.trim()).filter(Boolean), candidates=[];
+ const labelRe=/(事業者.{0,5}登.{0,6}番|登録\s*番号|登錄\s*番号|適格請求書|インボイス|登録\s*[NＮ]o)/i;
+ for(let i=0;i<lines.length;i++){
+  const raw=lines[i],label=labelRe.test(raw);
+  // Broken print may put the T-number on the next line after the label.
+  const combined=label?lines.slice(i,i+3).join(' '):raw;
+  for(const m of combined.matchAll(/[TＴtｔ丁〒]\s*[:：]?\s*((?:[0-9０-９ＯOo〇○ＩIl|ｌＳsＢbＺzＧg][,－―ー‐−–—.:・\s]*){13})(?![0-9０-９])/g)){
+   const digits=fixInvoiceDigits(m[1]);
+   if(/^\d{13}$/.test(digits))candidates.push({value:'T'+digits,score:label?180:100});
+  }
+  if(label){
+   // Only recover a missing 'T' when the receipt actually mentions a registration number.
+   for(const value of combined.matchAll(/(?<![\d])((?:[0-9０-９ＯOo〇○ＩIl|ｌＳsＢbＺz][,－―ー‐−–—.:・\s]*){13})(?![0-9０-９])/g)){
+    const digits=fixInvoiceDigits(value[1]);
+    if(/^\d{13}$/.test(digits))candidates.push({value:'T'+digits,score:77});
+   }
+  }
+ }
+ return candidates.sort((a,b)=>b.score-a.score)[0]||null;
+}
 function findPayment(text){const t=normalizeText(text);const variants=[[/PayPay|ペイペイ|d払い|楽天ペイ|au\s*PAY|QR決済/i,'QR決済'],[/VISA|Master\s?Card|JCB|AMEX|クレジット|クレカ|カード決済|カード払い/i,'クレジットカード'],[/Suica|PASMO|ICOCA|交通系|電子マネー|nanaco|WAON|iD決済/i,'電子マネー'],[/デビット/i,'デビットカード'],[/銀行振込|振込先|振込明細/i,'銀行振込'],[/現\s*金|CASH/i,'現金']];for(const [r,value] of variants){if(r.test(t))return {value,score:60}}return null}
 function findTaxRate(text){const t=normalizeText(text);if(/(?:10\s*%|10パーセント)/i.test(t)&&/(?:8\s*%|軽減)/i.test(t))return{value:'mixed',score:50};if(/10\s*%/.test(t))return{value:'10',score:45};if(/8\s*%|軽減税率/.test(t))return{value:'8',score:45};return null}
-function suggestCategory(text){const t=normalizeText(text).toLowerCase();const rules=[[/駐車場|パーキング|駐車料金|タイムズ|リパーク/,'駐車場代'],[/ガソリン|軽油|ハイオク|レギュラー|apollostation|eneos|出光/,'ガソリン代'],[/高速料金|通行料金|etc\s*利用/,'高速道路料金'],[/タクシー|鉄道|交通費|電車|新幹線|乗車|バス乗車|切符/,'旅費交通費'],[/切手|郵送|送料|宅配|ヤマト運輸|佐川急便/,'荷造運賃'],[/携帯電話|インターネット料金|光回線|モバイル通信/,'通信費'],[/印刷|コピー用紙|文房具|筆記具|事務用品/,'消耗品費'],[/書籍|参考書|新聞代/,'新聞図書費'],[/講習|研修参加|セミナー/,'研修費'],[/広告費|宣伝費/,'広告宣伝費']];for(const [re,val] of rules){if(re.test(t))return {value:val,score:40}}return null}
-function parseReceipt(text){const normalized=normalizeText(text);const lines=normalized.split(/\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
- const fields={date:findDate(lines),amount:findAmount(lines),store:findStore(lines),taxAmount:findTax(lines),invoiceNo:findInvoice(normalized),payment:findPayment(normalized),taxRate:findTaxRate(normalized),category:suggestCategory(normalized)};
- if(fields.taxAmount&&fields.amount){
- const tax=fields.taxAmount.value,total=fields.amount.value;
- if(tax>total || tax<total*.012 || tax>total*.17){fields.taxAmount=null}
+function suggestCategory(text){const t=normalizeText(text).toLowerCase();const rules=[[/駐車場|パーキング|駐車料金|タイムズ|リパーク/,'駐車場代'],[/ガソリン|軽油|ハイオク|レギュラー|apollostation|eneos|出光/,'ガソリン代'],[/高速料金|通行料金|etc\s*利用/,'高速道路料金'],[/タクシー|鉄道|交通費|電車|新幹線|乗車|バス乗車|切符/,'旅費交通費'],[/切手|郵送|送料|宅配|ヤマト運輸|佐川急便/,'荷造運賃'],[/携帯電話|インターネット料金|光回線|モバイル通信/,'通信費'],[/印刷|コピー代|コピ一代|コピー料金|複写代|コピー用紙|文房具|筆記具|事務用品/,'消耗品費'],[/書籍|参考書|新聞代/,'新聞図書費'],[/講習|研修参加|セミナー/,'研修費'],[/広告費|宣伝費/,'広告宣伝費']];for(const [re,val] of rules){if(re.test(t))return {value:val,score:40}}return null}
+
+// v6: OCR extraction for toll-road, fuel, parking and ordinary receipts.
+// Don't silently invent numbers. A missing/ambiguous result must be reviewed against the original.
+function findDateV6(lines){
+ const candidates=[];const patterns=[
+  {re:/(20\d{2})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})\s*日?/g,kind:'full'},
+  {re:/(?:令和|R)\s*(\d{1,2})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})\s*日?/gi,kind:'reiwa'},
+  {re:/(?:^|\D)(\d{2})\s*[/\-.]\s*(\d{1,2})\s*[/\-.]\s*(\d{1,2})(?=\D|$)/g,kind:'short'},
+  {re:/(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)/g,kind:'compact'}
+ ];
+ for(let i=0;i<lines.length;i++){
+  const line=lines[i].replace(/(?<=\d)\s+(?=\d)/g,'').replace(/[年月日]\s+/g,m=>m.trim());
+  for(const {re,kind} of patterns)for(const match of line.matchAll(re)){
+   const y=kind==='reiwa'?2018+Number(match[1]):kind==='short'?2000+Number(match[1]):Number(match[1]);
+   const m=Number(match[2]),d=Number(match[3]);if(!validDate(y,m,d))continue;
+   let score=65;
+   if(/(?:通行|利用|通過|給油|取引|購入|売上|領収|お買上|お買い上げ|発行|決済|出庫|入庫|精算|受付|日付|日時|DATE|受領)/i.test(line))score+=35;
+   if(/(?:通行日|利用日|ご利用日|利用年月日|給油日|売上日|取引日|購入日)/.test(line))score+=26;
+   if(/(?:発行|領収)/.test(line))score+=6;
+   if(/(?:有効期限|使用期限|支払期限|請求期限|契約日|次回|前回|登録日|カード期限|印刷日|集計期間|対象期間)/.test(line))score-=100;
+   if(i<18)score+=12; if(i>75)score-=8;
+   const now=new Date(),date=new Date(y,m-1,d);if(date.getTime()>now.getTime()+86400000*4)score-=80;
+   candidates.push({value:[y,String(m).padStart(2,'0'),String(d).padStart(2,'0')].join('-'),score,why:line});
+  }
  }
- return {fields,raw:normalized};}
+ return candidates.filter(x=>x.score>20).sort((a,b)=>b.score-a.score)[0]||null;
+}
+function amountLineContext(line){
+ const positive=/(?:総合計|ご請求(?:金額|額)|請求金額|お支払(?:い)?(?:金額|合計|額)|お買(?:い)?上(?:げ)?(?:金額|計|合計)|販売(?:金額|合計)|通行(?:料金|料)|利用(?:料金|金額|料|額)|精算(?:金額|額)|領収(?:金額|額)|料金合計|支払(?:総額|金額|額)|税込(?:合計|金額|総額)|合計(?:金額|額)?|現計|お会計|今回ご利用額|決済金額|TOTAL(?: AMOUNT)?|AMOUNT DUE|BALANCE DUE)/i;
+ const negative=/(?:小計|税抜|税別|本体価格|単価|数量|ﾘｯﾄﾙ|リットル|給油量|給油数量|燃料油単価|お釣り?|おつり|釣銭|お預り|預り金|値引|割引|クーポン|ポイント|残高|消費税|内税|外税|税額|税率|登録番号|事業者番号|請求書番号|カード番号|車両番号|お客様番号|領収書NO|伝票番号|処理番号|認証番号|取引番号|管理番号|電話|TEL|FAX|受付番号|整理番号|有効期限|区間番号)/i;
+ return {positive,negative};
+}
+function findAmountV6(lines){
+ const {positive,negative}=amountLineContext();const candidates=[];
+ for(let i=0;i<lines.length;i++){
+  const line=lines[i];const isPositive=positive.test(line),isNegative=negative.test(line);
+  const dateOrId=/(?:電話|TEL|登録番号|車両番号|カード番号|ETCカード|ICカード|会員番号|ナンバー|スタンド番号|レシート番号|領収番号|請求書番号|伝票番号|取引番号|認証番号|郵便番号)/i.test(line);
+  if(dateOrId)continue;
+  for(const token of numericValues(line)){
+   const near=line.slice(Math.max(0,token.index-8),token.index+token.text.length+4);
+   if(/\d\s*[%％]|(?:\d+(?:\.\d+)?\s*(?:L|ℓ|リットル|km|㎞|個|点|枚))\b/i.test(near))continue;
+   let score=(token.yen?28:0)+(i<22?4:0);
+   if(isPositive){score+=108;if(/(?:通行料金|通行料|販売金額|領収金額|精算金額|ご利用金額|お支払金額|支払総額|合計金額|合計)/i.test(line))score+=22;}
+   if(isNegative)score-=isPositive?85:155;
+   if(/(?:10\s*%|8\s*%|税率|内消費税|税額)/.test(line))score-=90;
+   if(/(?:[0-9]{2,4}[:/.-][0-9]{1,2}|20\d{6})/.test(line)&&!token.yen)score-=80;
+   if(token.value<10)score-=14;
+   candidates.push({value:token.value,score,why:line});
+  }
+  if(isPositive&&!isNegative&&numericValues(line).length===0&&i+1<lines.length){
+   const following=lines[i+1];if(!negative.test(following)&&!/(?:番号|カード|電話|TEL|日付|日時)/.test(following)){
+    for(const token of numericValues(following))if(token.yen||/^[¥\d,\s円]+$/.test(following))candidates.push({value:token.value,score:116+(token.yen?15:0),why:line+' / '+following});
+   }
+  }
+ }
+ // Do not choose a bare unrelated number when no total/payment wording or yen mark exists.
+ const best=candidates.sort((a,b)=>b.score-a.score||b.value-a.value)[0];return best&&best.score>=28?best:null;
+}
+function findTaxV6(lines,amount){
+ const candidates=[];const taxWord=/(?:内(?:消費)?税(?:等|額)?|消費税(?:等|額)?|税額(?:合計)?|税合計|外税|税相当額|内訳\s*税)/i;
+ for(let i=0;i<lines.length;i++){
+  const line=lines[i];if(!taxWord.test(line))continue;
+  if(/(?:登録番号|法人番号|消費税課税事業者|税務署)/.test(line))continue;
+  const toks=numericValues(line);let found=false;
+  for(const token of toks){
+   if(amount!=null&&token.value>amount)continue;
+   const after=line.slice(token.index+token.text.length,token.index+token.text.length+3);
+   if(/[%％]/.test(after))continue;
+   if(/(?:対象|課税対象|対象額|課税売上|商品代金)/.test(line)&&!/(?:内税|内消費税|税額)/.test(line))continue;
+   const before=line.slice(0,token.index);
+   if(!taxWord.test(before))continue;
+   let score=100+(token.yen?19:0)+(line.includes('内消費税')?25:0);
+   if(/(?:消費税額|税額合計|税合計)/.test(line))score+=17;
+   if(/(?:対象額|課税対象)/.test(line))score-=12;
+   if(amount>0){const ratio=token.value/amount;if(ratio>.14)score-=110;else if(ratio>.06&&ratio<.10)score+=12;}
+   candidates.push({value:token.value,score,why:line});found=true;
+  }
+  if(!found&&i+1<lines.length&&!/(?:対象|課税対象)/.test(line)){
+   const next=lines[i+1];if(/^[\s¥\\￥\d,円()（）-]+$/.test(next))for(const token of numericValues(next)){if(amount&&token.value>amount)continue;candidates.push({value:token.value,score:90+(token.yen?14:0),why:line+' / '+next})}
+  }
+ }
+ const best=candidates.sort((a,b)=>b.score-a.score)[0];return best&&best.score>=45?best:null;
+}
+function findInvoiceV6(text){
+ const t=normalizeText(text);const lines=t.split('\n').map(v=>v.trim()).filter(Boolean);
+ const label=/(?:事業者.{0,8}登.{0,5}番|(?:適格)?請求書.{0,5}登録|(?:登録|登錄|事業者|適格請求書|インボイス).{0,7}(?:番号|NO|No)|登録番号)/i;
+ const found=[];
+ // This tolerates OCR spaces, hyphens and confusable O/0, I/1 in a 13-digit registration number.
+ for(let i=0;i<lines.length;i++){
+  const isLabel=label.test(lines[i]);const segment=isLabel?lines.slice(i,i+3).join(' '):lines[i];
+  for(const m of segment.matchAll(/(?:[TＴtｔ丁〒])\s*[:：‐－-]?\s*((?:[0-9０-９ＯOo〇○ＩIl|ｌＳsＢbＺzＧg][,－―ー‐−–—.:・\s]*){13})(?![0-9０-９])/g)){
+   const digits=fixInvoiceDigits(m[1]);if(!/^\d{13}$/.test(digits))continue;
+   found.push({value:'T'+digits,score:(isLabel?195:125)+(i<18?9:0),why:lines[i]});
+  }
+  if(isLabel){
+   for(const m of segment.matchAll(/(?<![\d])((?:[0-9０-９ＯOo〇○ＩIl|ｌＳsＢbＺzＧg][,－―ー‐−–—.:・\s]*){13})(?![0-9０-９])/g)){
+    const digits=fixInvoiceDigits(m[1]);if(/^\d{13}$/.test(digits))found.push({value:'T'+digits,score:82+(i<18?9:0),why:lines[i]});
+   }
+  }
+ }
+ const ranked=found.sort((a,b)=>b.score-a.score);return ranked[0]||null;
+}
+function findStoreV6(lines){
+ const base=findStore(lines);const known=[
+  {pattern:/\b(?:NEXCO|ネクスコ)\s*(?:東日本|中日本|西日本)?\b/i,name:null},
+  {pattern:/(?:阪神高速(?:道路)?(?:株式会社)?|首都高速(?:道路)?(?:株式会社)?|本州四国連絡高速(?:道路)?)/i,name:null},
+  {pattern:/(?:ENEOS|エネオス|apollostation|アポロステーション|コスモ石油|キグナス石油|SOLATO|出光興産|JA-SS|シェル石油|セルフステーション)/i,name:null},
+  {pattern:/(?:タイムズ(?:パーキング)?|Times(?: パーキング)?|三井のリパーク|NPC24H|名鉄協商|エコロパーク)/i,name:null},
+  {pattern:/(?:セブン[‐\-ー・ ]?イレブン|ローソン|ファミリーマート|ミニストップ|デイリーヤマザキ)/i,name:null}
+ ];
+ const ranked=[];
+ for(let i=0;i<Math.min(lines.length,28);i++){
+  const v=lines[i].trim();
+  for(const {pattern,name} of known){const m=v.match(pattern);if(!m)continue;
+   const value=v.length<54&&!/(?:〒|TEL|電話|登録番号|¥|お支払|金額|年\d+月)/.test(v)?v:name||m[0];
+   ranked.push({value,score:135-i*.5,why:v});
+  }
+ }
+ const knownShop=ranked.sort((a,b)=>b.score-a.score)[0]||null;
+ return base&&(base.score>=100||!knownShop)?base:knownShop;
+}
+function suggestCategoryV6(text){
+ const t=normalizeText(text);
+ // Prefer purpose words over shop names; ENEOS can appear on a convenience store advertisement.
+ const rules=[
+  [/(?:通行料金|通行料|高速道路|高速料金|ETC\s*利用|NEXCO|阪神高速|首都高速|料金所|入口IC|出口IC|通行証明)/i,'高速道路料金'],
+  [/(?:ガソリン|軽油|レギュラー|ハイオク|給油|油種|燃料油|燃料代|ENEOS|エネオス|apollostation|コスモ石油|キグナス|JA-SS|SOLATO)/i,'ガソリン代'],
+  [/(?:駐車料金|駐車代|駐車場|パーキング|タイムズ|リパーク|駐車券|出庫精算)/i,'駐車場代']
+ ];
+ for(const [re,value] of rules)if(re.test(t))return {value,score:74};
+ return suggestCategory(t);
+}
+function parseReceipt(text){const normalized=normalizeText(text);const lines=normalized.split(/\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
+ const total=findAmountV6(lines),tax=findTaxV6(lines,total?.value);
+ const fields={date:findDateV6(lines),amount:total,store:findStoreV6(lines),taxAmount:tax,invoiceNo:findInvoiceV6(normalized),payment:findPayment(normalized),taxRate:findTaxRate(normalized),category:suggestCategoryV6(normalized)};
+ if(fields.taxAmount&&fields.amount){
+  const tax=fields.taxAmount.value,total=fields.amount.value;
+  if(tax>total||tax<total*.0005||tax>total*.12)fields.taxAmount=null;
+  else if(!fields.taxRate){const ten=total*10/110,eight=total*8/108;
+   if(Math.abs(tax-ten)<=Math.max(1,total*.0015))fields.taxRate={value:'10',score:30};
+   else if(Math.abs(tax-eight)<=Math.max(1,total*.0012))fields.taxRate={value:'8',score:30};}
+ }
+ return {fields,raw:normalized};
+}
 function mergeFields(one,two){const data={};for(const field of ['date','amount','store','taxAmount','invoiceNo','payment','taxRate','category']){
- const a=one?.fields[field],b=two?.fields[field];data[field]=a&&b?(a.score>=b.score?a:b):(a||b||null)}return data}
+ const a=one?.fields[field],b=two?.fields[field];
+ if(a&&b&&a.value!==b.value&&['invoiceNo','amount','date'].includes(field)&&Math.abs(a.score-b.score)<16){data[field]=null;continue;}
+ data[field]=a&&b?(a.score>=b.score?a:b):(a||b||null);
+ }return data}
 $('ocr').onclick=async()=>{
  if(!selectedFile){notice('先に領収書の写真を選んでください');return}
  const btn=$('ocr');btn.disabled=true;btn.textContent='解析中…';let worker;
@@ -197,21 +430,39 @@ $('ocr').onclick=async()=>{
    }
    second=parseReceipt(rawTwo.join('\n'));
   }
-  const data=mergeFields(first,second);
+  let data=mergeFields(first,second),third=null;
+  if($('ocrMode').value==='high'&&(!data.store||!data.invoiceNo||!data.date||!data.amount)){
+   // Enlarging the receipt header often helps with stylized store logos and tiny T numbers.
+   notice('小さな店名・T番号を拡大して確認しています…');
+   const header=headerCanvasForOcr(source,rotation);
+   try{
+    await worker.setParameters({tessedit_pageseg_mode:'6'});
+    third=parseReceipt((await worker.recognize(header)).data.text);
+    const improved=mergeFields({fields:data},third);
+    // Extra header-only OCR must not override amounts/dates found on the complete image.
+    for(const key of ['store','invoiceNo','date'])if(improved[key])data[key]=improved[key];
+   }finally{header.width=0;header.height=0}
+  }
   // Never allow the initial value (today) or a previous scan's values to masquerade as OCR results.
   for(const key of ['date','amount','store','taxAmount','invoiceNo'])$(key).value=data[key]?.value??'';
+  if(data.invoiceNo)$('invoiceNo').value=normalizeInvoiceInput(data.invoiceNo.value);
   for(const key of ['payment','taxRate'])$(key).value=data[key]?.value??(key==='payment'?'未設定':'');
-  $('category').value=data.category?.value||'未分類';
-  $('ocrText').textContent=first.raw+(second?'\n\n===== 補正画像の認識結果 =====\n'+second.raw:'');
+  $('category').value=suggestVendorCategory(data.store?.value)||data.category?.value||'未分類';
+  $('receiptType').value=guessReceiptType(first.raw+' '+(second?.raw||''));
+  $('reviewed').checked=false;$('invoiceVerified').checked=false;lastOcrData=data;renderOcrEvidence(data);
+  if(/(?:コピー代|コピ一代|コピー料金|複写代)/.test((first.raw||'')+' '+(second?.raw||'')+' '+(third?.raw||'')))$('detail').value='コピー代';
+  else $('detail').value='';
+  $('ocrText').textContent=first.raw+(second?'\n\n===== 補正画像の認識結果 =====\n'+second.raw:'')+(third?'\n\n===== 店名と番号（拡大）の認識結果 =====\n'+third.raw:'');
   updateBusinessEstimate();
   const missing=[];if(!data.date)missing.push('日付');if(!data.amount)missing.push('金額');if(!data.store)missing.push('店名');
-  const unresolved=missing.length?'未認識：'+missing.join('・')+'。':'主要3項目を入力しました。';
+  if(!data.invoiceNo||!data.taxAmount)showSaveStatus('T番号や消費税額を認識できなかったときは空欄のままです。高速道路・ガソリン等でも原本と照合して保存してね。','info');
+  const unresolved=missing.length?'未認識または判定が一致しない項目：'+missing.join('・')+'。':'主要3項目を入力しました。';
   const help=!cropBox?'\n背景が多い写真は「領収書だけを囲んで読み取る」を使うと改善することがあります。':'';
   notice('読み取り完了。'+unresolved+help+'\n日付が取れない場合は空欄にしています。間違った値がないか原本で確認してね。');
  }catch(e){notice('読み取りできませんでした：'+(e.message||e)+'\n写真を明るく撮る・領収書部分を囲む・手入力を試してください。')}
  finally{for(const page of pages){page.width=0;page.height=0}if(worker)try{await worker.terminate()}catch{}btn.disabled=false;btn.textContent='🔍 写真から自動入力'}
 };
-function filtered(){const month=$('month').value,period=$('period').value,c=$('filter').value;return all.filter(x=>{const date=String(x.date||'');const inPeriod=period==='all'||(period==='year'?date.startsWith(month.slice(0,4)):date.startsWith(month));return inPeriod&&(!c||x.category===c)}).sort((a,b)=>String(b.date).localeCompare(String(a.date)))}
+function filtered(){const month=$('month').value,period=$('period').value,c=$('filter').value;return all.filter(x=>{const date=String(x.date||'');const inPeriod=period==='all'||(period==='year'?date.startsWith(month.slice(0,4)):date.startsWith(month));return inPeriod&&(!c||x.category===c)&&advancedReceiptFilter(x)}).sort((a,b)=>String(b.date).localeCompare(String(a.date)))}
 function render(){const rows=filtered();const paid=rows.reduce((n,x)=>n+Number(x.amount||0),0),expensed=rows.reduce((n,x)=>n+businessAmount(x.amount,x.businessRate==null?100:x.businessRate),0);
  $('total').textContent=money(expensed);$('totalPaid').textContent='支払総額 '+money(paid);$('count').textContent=rows.length+'枚';
  $('totalLabel').textContent=($('period').value==='all'?'全期間':$('period').value==='year'?'選択年':'表示月')+'の経費';
@@ -228,34 +479,62 @@ function render(){const rows=filtered();const paid=rows.reduce((n,x)=>n+Number(x
   action.className='miniActions';const edit=document.createElement('button');edit.className='secondary';edit.textContent='編集';edit.onclick=()=>editReceipt(x);
   const del=document.createElement('button');del.className='danger';del.textContent='削除';del.onclick=async()=>{if(confirm('この領収書を削除してよいですか？')){await deleteItem(x.id);await refresh()}};action.append(edit,del);right.append(amount,action);row.append(img,main,right);$('entries').append(row)
  }
+ renderAdvancedDashboard(rows);updateBackupReminder();
 }
-function editReceipt(x){editId=x.id;selectedFile=null;resetCrop();if(selectedUrl)URL.revokeObjectURL(selectedUrl);selectedUrl=null;$('photo').value='';for(const key of ['date','amount','store','detail','category','payment','taxRate','taxAmount','invoiceNo','memo']){
+function editReceipt(x){editId=x.id;lastOcrData=null;batchActiveIndex=null;selectedFile=null;resetCrop();if(selectedUrl)URL.revokeObjectURL(selectedUrl);selectedUrl=null;$('photo').value='';for(const key of ['date','amount','store','detail','category','payment','taxRate','taxAmount','invoiceNo','memo']){
  if($(key))$(key).value=x[key]??(key==='payment'?'未設定':'')}
- $('businessRate').value=x.businessRate==null?100:x.businessRate;setPreview(x.photo||null);$('save').textContent='💾 変更を保存する';updateBusinessEstimate();window.scrollTo({top:0,behavior:'smooth'});notice('編集中です。写真を変更しなければ元の領収書画像は維持されます')}
-$('save').onclick=async()=>{if(!db){notice('データベースが利用できません');return}const date=$field('date'),amount=Number($field('amount')),store=$field('store'),rate=Number($field('businessRate'));
- if(!date||$field('amount')===''||!Number.isFinite(amount)||amount<0||!Number.isSafeInteger(amount)){notice('正しい日付・整数の金額を入力してください');return}
- if($field('businessRate')===''||!Number.isFinite(rate)||rate<0||rate>100){notice('事業使用割合は0～100%で入力してください');return}
- let taxAmount=$field('taxAmount')===''?null:Number($field('taxAmount'));if(taxAmount!==null&&(!Number.isFinite(taxAmount)||taxAmount<0||taxAmount>amount)){notice('消費税額が支払総額を超えないか確認してください');return}
- const invoiceNo=$field('invoiceNo').replace(/\s/g,'').toUpperCase();if(invoiceNo&&!/^T\d{13}$/.test(invoiceNo)){notice('適格請求書番号はTと13桁の数字です');return}
- const original=editId?all.find(x=>x.id===editId):null;const same=all.find(x=>x.id!==editId&&x.date===date&&Number(x.amount)===amount&&(x.store||'').trim().toLowerCase()===store.toLowerCase());
- if(same&&!confirm('同じ日付・店名・金額の領収書が登録済みです。重複して保存しますか？'))return;
- try{const photo=selectedFile?await compactPhoto(selectedFile):(original?.photo||null);const receipt={id:editId||(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2)),date,amount,store,detail:$field('detail'),category:$field('category')||'未分類',payment:$field('payment')||'未設定',taxRate:$field('taxRate'),taxAmount,businessRate:rate,invoiceNo,memo:$field('memo'),photo,createdAt:original?.createdAt||new Date().toISOString()};
- await saveItem(receipt);$('month').value=date.slice(0,7);$('period').value='month';$('filter').value='';resetForm();await refresh();notice('保存しました！ 写真と入力内容を確認できます。')
- }catch(e){notice('保存に失敗しました。iPhoneの空き容量を確認してください：'+e.message)}
+ $('businessRate').value=x.businessRate==null?100:x.businessRate;$('receiptType').value=x.receiptType||'その他';$('invoiceVerified').checked=Boolean(x.invoiceVerified);$('reviewed').checked=Boolean(x.reviewed);$('ocrEvidence').replaceChildren();setPreview(x.photo||null);$('save').textContent='💾 変更を保存する';updateBusinessEstimate();window.scrollTo({top:0,behavior:'smooth'});notice('編集中です。写真を変更しなければ元の領収書画像は維持されます')}
+$('save').onclick=async()=>{
+ const btn=$('save');clearSaveStatus();
+ if(!db){showSaveStatus('この端末で保存用データベースが利用できません。Safariの通常モードで開いてね。');return}
+ const date=$field('date'),amountRaw=$field('amount'),amount=Number(amountRaw),store=$field('store'),rateRaw=$field('businessRate'),rate=Number(rateRaw);
+ if(!date){showSaveStatus('保存できません：日付が空欄です。領収書の日付を入力してね。','error','date');return}
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){showSaveStatus('保存できません：日付が正しくありません。','error','date');return}
+ if(amountRaw===''||!Number.isFinite(amount)||amount<=0||!Number.isSafeInteger(amount)){showSaveStatus('保存できません：支払総額を1円以上の整数で入力してね。','error','amount');return}
+ if(rateRaw===''||!Number.isFinite(rate)||rate<0||rate>100){showSaveStatus('保存できません：事業使用割合は0～100%で入力してね。','error','businessRate');return}
+ let taxAmount=$field('taxAmount')===''?null:Number($field('taxAmount'));
+ if(taxAmount!==null&&(!Number.isFinite(taxAmount)||!Number.isSafeInteger(taxAmount)||taxAmount<0||taxAmount>amount)){showSaveStatus('保存できません：消費税額が正しいか確認してね。','error','taxAmount');return}
+ const invoiceNo=normalizeInvoiceInput($field('invoiceNo'));
+ if(invoiceNo&&!/^T\d{13}$/.test(invoiceNo)){showSaveStatus('保存できません：T番号は「T＋13桁の数字」で入力してね。数字だけ13桁でもOKだよ。','error','invoiceNo');return}
+ $('invoiceNo').value=invoiceNo;
+ const original=editId?all.find(x=>x.id===editId):null;
+ const photoHash=selectedFile?await digestPhoto(selectedFile):null;
+ const same=all.find(x=>x.id!==editId&&x.date===date&&Number(x.amount)===amount&&(x.store||'').trim().toLowerCase()===store.toLowerCase());
+ const exact=photoHash&&all.find(x=>x.id!==editId&&x.imageHash===photoHash);
+ if((same||exact)&&!confirm((exact?'同一の写真が既に登録されています。':'日付・店名・金額が一致する領収書が登録済みです。')+'重複して保存しますか？')){showSaveStatus('重複のため保存を中止しました。','info');return}
+ btn.disabled=true;btn.textContent='💾 保存しています…';showSaveStatus('写真と入力内容を端末内に保存しています…','info');
+ try{
+  const photo=selectedFile?await compactPhoto(selectedFile):(original?.photo||null);
+  const receipt={id:editId||(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2)),date,amount,store,detail:$field('detail'),category:$field('category')||'未分類',payment:$field('payment')||'未設定',taxRate:$field('taxRate'),taxAmount,businessRate:rate,invoiceNo,memo:$field('memo'),photo,createdAt:original?.createdAt||new Date().toISOString(),
+      receiptType:$field('receiptType')||'その他',reviewed:$('reviewed').checked,invoiceVerified:!!(invoiceNo&&$('invoiceVerified').checked),invoiceVerifiedAt:invoiceNo&&$('invoiceVerified').checked?(original?.invoiceNo===invoiceNo&&original?.invoiceVerifiedAt?original.invoiceVerifiedAt:new Date().toISOString()):null,
+      imageHash:photoHash||original?.imageHash||null,ocrConfidence:lastOcrData?confidenceSummary(lastOcrData):original?.ocrConfidence||null,updatedAt:new Date().toISOString(),history:editId?[...(original?.history||[]).slice(-19),{at:new Date().toISOString(),action:'編集',oldAmount:original?.amount,oldCategory:original?.category}]:original?.history||[]};
+      if($('learnVendor').checked&&store)learnVendorCategory(store,receipt.category);
+      const savedBatch=batchActiveIndex;
+  await saveItem(receipt);
+  $('month').value=date.slice(0,7);$('period').value='month';$('filter').value='';resetForm();
+  await refresh(); if(savedBatch!=null)markBatchDone(savedBatch);updateBackupReminder();
+  showSaveStatus('✅ 保存できたよ！ 下の「保存した領収書」に登録されました。','success');
+  notice('保存しました！');
+ }catch(e){
+  const message=String(e?.message||e||'不明なエラー');
+  showSaveStatus('保存できませんでした。iPhoneの空き容量、プライベートブラウズの使用、端末ストレージの制限を確認してね。\n詳細：'+message,'error');
+  notice('保存に失敗しました：'+message);
+ }finally{btn.disabled=false;btn.textContent=editId?'💾 変更を保存する':'💾 領収書を保存する'}
 };
 $('month').addEventListener('change',render);$('period').addEventListener('change',render);$('filter').addEventListener('change',render);
-function exportRows(){const headers=['日付','店名・支払先','購入内容・用途','経費科目','支払方法','支払総額(税込円)','税率','消費税額(円)','事業使用割合(%)','経費計上額(円)','適格請求書番号','メモ'];const data=filtered().map(x=>[x.date,x.store||'',x.detail||'',x.category||'未分類',x.payment||'未設定',Number(x.amount||0),x.taxRate||'',x.taxAmount??'',x.businessRate??100,businessAmount(x.amount,x.businessRate==null?100:x.businessRate),x.invoiceNo||'',x.memo||'']);return [headers,...data]}
+function exportRows(){const headers=['日付','店名・支払先','内容','領収書種類','経費科目','支払方法','支払総額(税込円)','税率','消費税額(円)','事業使用割合(%)','経費計上額(円)','適格請求書番号','番号確認済み(手動)','原本確認済み','OCR信頼度(参考)','メモ','登録日時','更新日時'];const data=filtered().map(x=>[x.date,x.store||'',x.detail||'',x.receiptType||'',x.category||'未分類',x.payment||'未設定',Number(x.amount||0),x.taxRate||'',x.taxAmount??'',x.businessRate??100,businessAmount(x.amount,x.businessRate==null?100:x.businessRate),x.invoiceNo||'',x.invoiceVerified?'はい':'未確認',x.reviewed?'はい':'未確認',x.ocrConfidence||'',x.memo||'',x.createdAt||'',x.updatedAt||'']);return [headers,...data]}
 function exportName(ext){const t=$('period').value;return `領収書_${t==='all'?'全期間':t==='year'?$('month').value.slice(0,4)+'年':$('month').value}.${ext}`}
 function download(blob,filename){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),25000)}
 const csvEscape=value=>{let s=String(value??'');if(/^[\s]*[=+@\-\t\r]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"'};
 $('csv').onclick=()=>{const text='\ufeff'+exportRows().map(r=>r.map(csvEscape).join(',')).join('\r\n');download(new Blob([text],{type:'text/csv;charset=utf-8'}),exportName('csv'))};
-$('xlsx').onclick=async()=>{try{notice('Excel出力の準備中…');if(!window.XLSX)await loadScript('https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js');const ws=XLSX.utils.aoa_to_sheet(exportRows());ws['!cols']=[{wch:13},{wch:25},{wch:28},{wch:18},{wch:15},{wch:17},{wch:9},{wch:14},{wch:20},{wch:17},{wch:20},{wch:40}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'経費一覧');XLSX.writeFile(wb,exportName('xlsx'));notice('Excelファイルを出力しました。ダウンロード先を確認してください')}
+$('xlsx').onclick=async()=>{try{notice('Excel出力の準備中…');if(!window.XLSX)await loadScript('https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js');const ws=XLSX.utils.aoa_to_sheet(exportRows());ws['!cols']=exportRows()[0].map(()=>({wch:20}));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'経費一覧');XLSX.writeFile(wb,exportName('xlsx'));notice('Excelファイルを出力しました。ダウンロード先を確認してください')}
  catch(e){notice('Excelの出力に失敗しました。CSV出力なら追加ライブラリなしで使えます：'+e.message)}};
-$('backup').onclick=()=>{const payload={version:2,createdAt:new Date().toISOString(),customCategories:getCustomCategories(),receipts:all};download(new Blob([JSON.stringify(payload)],{type:'application/json'}),`領収書バックアップ_${localDate()}.json`)};
+$('backup').onclick=()=>{const payload={version:10,createdAt:new Date().toISOString(),customCategories:getCustomCategories(),vendorRules:getVendorRules(),receipts:all};download(new Blob([JSON.stringify(payload)],{type:'application/json'}),`領収書バックアップ_${localDate()}.json`);localStorage.setItem('receipt-last-backup-v10',JSON.stringify({time:Date.now(),count:all.length}));updateBackupReminder();notice('バックアップファイルの保存先を確認してね。自動でクラウドには送られません。')};
 $('restore').onclick=()=>$('restoreFile').click();$('restoreFile').onchange=async event=>{
  try{const file=event.target.files?.[0];if(!file)return;const data=JSON.parse(await file.text());if(!Array.isArray(data.receipts))throw Error('レシート帳のバックアップ形式ではありません');
  if(!confirm(`${data.receipts.length}件を復元します。同じIDのデータは上書きされます。よいですか？`))return;
  if(Array.isArray(data.customCategories))try{localStorage.setItem(CATEGORY_KEY,JSON.stringify(data.customCategories.filter(x=>typeof x==='string'&&x.length<=30)))}catch{}
+ if(data.vendorRules&&typeof data.vendorRules==='object')try{localStorage.setItem('receipt-vendor-categories-v10',JSON.stringify(data.vendorRules))}catch{}
  for(const x of data.receipts){if(!x||typeof x.id!=='string'||typeof x.date!=='string'||!/^20\d{2}-\d{2}-\d{2}$/.test(x.date)||!Number.isFinite(Number(x.amount)))continue;await saveItem({...x,category:x.category||'未分類',businessRate:x.businessRate??100});}
  await refresh();notice('バックアップを復元しました')
  }catch(e){notice('復元できませんでした：'+e.message)}finally{event.target.value=''}

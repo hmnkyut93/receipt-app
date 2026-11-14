@@ -24,14 +24,32 @@
 label{display:block;font-size:13px;font-weight:700;margin:13px 0 5px}input,select,textarea,button{font:inherit}input,select,textarea{width:100%;border:1px solid #cad7d0;border-radius:9px;padding:11px;min-height:43px;background:white;color:#1e3029}textarea{resize:vertical;min-height:68px}input:focus,select:focus,textarea:focus{outline:2px solid #89c9b3;outline-offset:0}
 button{border:0;border-radius:10px;padding:11px 13px;font-weight:700;background:#136b59;color:#fff;cursor:pointer;min-height:43px}button:disabled{opacity:.5;cursor:wait}button.secondary{background:#e5f1eb;color:#145c4d}button.ghost{background:#edf0ef;color:#40564e}button.danger{background:#fcece9;color:#a13027}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.actions button{flex:1}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 12px}.wide{grid-column:1/-1}.hint{color:#697c72;font-size:12px;line-height:1.6;margin:8px 0}.minor{font-size:12px;color:#697c72}.sectionTitle{border-top:1px solid #e7eeea;margin-top:16px;padding-top:10px;font-size:14px;font-weight:750;color:#265a4a}
 #preview{max-height:250px;width:auto;max-width:100%;border-radius:9px;margin:10px auto 0;display:none;object-fit:contain;border:1px solid #dae4de}#notice{display:none;background:#e9f4ee;border:1px solid #c7e2d6;border-radius:10px;padding:10px;margin:12px 0;font-size:13px;white-space:pre-wrap;line-height:1.5}
+#saveStatus{display:none;margin-top:10px;padding:12px;border-radius:11px;font-size:14px;font-weight:650;line-height:1.55;white-space:pre-wrap;border:1px solid #b5d6c8;background:#e7f6ef;color:#115a43}
+#saveStatus.error{display:block;background:#fff0ed;border-color:#f2b7ad;color:#922b20}
+#saveStatus.success{display:block;background:#e6f8eb;border-color:#9ed9ad;color:#176339}
+#saveStatus.info{display:block}
+.input-invalid{border:2px solid #dc6254!important;outline-color:#dc6254!important}
 small.note{font-size:11px;color:#6b776f}details{border-radius:10px;background:#f5f8f6;padding:11px;margin:12px 0}summary{font-weight:650;cursor:pointer}#ocrText{font-size:12px;white-space:pre-wrap;max-height:240px;overflow:auto;word-break:break-all}
 .checkrow{display:flex;align-items:center;gap:8px;margin:9px 0}.checkrow input{width:20px;height:20px;min-height:auto}.checkrow label{margin:0;font-size:13px;font-weight:500}.categoryRow{display:flex;gap:8px}.categoryRow input{flex:1;min-width:0}.categoryRow button{flex:0 0 auto}.entry{display:flex;align-items:center;gap:10px;margin:8px 0;padding:12px}.entry img{width:56px;height:72px;object-fit:cover;border-radius:7px;background:#e8ede9;cursor:pointer}.entry main{min-width:0;flex:1}.entry main b{display:block;overflow-wrap:anywhere}.entry .meta{font-size:12px;color:#68796e;line-height:1.5;margin-top:4px}.entry .amount{font-weight:750;white-space:nowrap;text-align:right}.entry .amount small{display:block;color:#66776d;font-size:11px;font-weight:400}.entry .miniActions{display:flex;gap:5px;justify-content:end;margin-top:6px}.entry .miniActions button{padding:7px 9px;font-size:12px;min-height:32px}.bar{height:9px;border-radius:8px;background:#e8efeb;overflow:hidden;margin:5px 0 13px}.bar>span{height:100%;display:block;background:#16856e}.hidden{display:none!important}
 @media(max-width:410px){.wrap{padding:10px}.stat{padding:11px}.stat strong{font-size:20px}.panel{padding:13px}.entry{gap:7px}.entry img{width:45px;height:61px}.entry .miniActions button{padding:6px}.grid{gap:0 8px}}
 footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line-height:1.6}
+
+.trustBox{border:1px solid #afcfc0;border-radius:11px;background:#f5faf7;padding:12px;margin:12px 0}
+.evidence{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:9px}
+.evidence>span{display:block;background:white;padding:7px;border-radius:8px;border:1px solid #dceae3;font-size:12px}
+.evidence .uncertain{border-color:#e4baa4;background:#fff8f2;color:#8a4929}
+.trustBox p{margin-bottom:0}
+.advancedBox{margin:15px 0}.dashBlock{margin-top:16px}
+.dashStat{border:1px solid #dceae3;padding:10px;border-radius:9px;background:#f9fcfa;margin:8px 0}
+.batchCard{padding:10px;margin:8px 0;border:1px solid #d7e5dd;border-radius:11px;background:#fbfdfb;display:flex;gap:9px;align-items:center}
+.batchCard img{width:52px;height:70px;object-fit:cover;border-radius:6px}
+.batchCard button{margin-left:auto;min-height:35px;padding:7px 9px;font-size:12px}
+.batchCard .status{font-size:12px;color:#667b70}.reminder{font-weight:650;color:#9d4d1a;background:#fff6eb;padding:11px;border-radius:10px}
+@media(max-width:410px){.evidence{grid-template-columns:1fr}.batchCard img{width:40px;height:54px}}
 </style>
 </head>
 <body>
-<header><div><h1>🧾 レシート帳 <span style="font-size:12px;font-weight:500;opacity:.8">v3</span></h1><p>領収書の撮影・仕分け・月別集計｜データはこの端末に保存</p></div></header>
+<header><div><h1>🧾 レシート帳 <span style="font-size:12px;font-weight:500;opacity:.8">v10</span></h1><p>領収書の撮影・仕分け・月別集計｜データはこの端末に保存</p></div></header>
 <div class="wrap">
   <div class="stats">
     <div class="stat"><span id="totalLabel">表示期間の経費</span><strong id="total">¥0</strong><em id="totalPaid">支払総額 ¥0</em></div>
@@ -49,9 +67,10 @@ footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line
       <div class="actions"><button type="button" id="cropApply">この範囲を使う</button><button type="button" id="cropCancel" class="secondary">閉じる</button></div>
     </section>
     <p class="hint">写真に机や周囲が大きく写っていると、店名や日付が誤認識されやすくなります。先に「領収書だけを囲んで読み取る」を使うのがおすすめ。</p>
-    <div class="grid"><div><label for="ocrMode">文字読み取りモード</label><select id="ocrMode"><option value="high">高精度（画像補正して2回解析）</option><option value="fast">高速（1回解析）</option></select></div><div><label for="rotation">画像の回転</label><select id="rotation"><option value="0">そのまま</option><option value="90">右へ90°</option><option value="180">180°</option><option value="270">左へ90°</option></select></div></div>
+    <div class="grid"><div><label for="ocrMode">文字読み取りモード</label><select id="ocrMode"><option value="high">高精度（補正＋店名と番号の拡大解析）</option><option value="fast">高速（1回解析）</option></select></div><div><label for="rotation">画像の回転</label><select id="rotation"><option value="0">そのまま</option><option value="90">右へ90°</option><option value="180">180°</option><option value="270">左へ90°</option></select></div></div>
     <div class="actions"><button id="ocr" type="button">🔍 写真から自動入力</button><button class="secondary" id="clear" type="button">入力をクリア</button></div>
-    <p class="hint">iPhone内で日本語＋英語の文字認識を実施。高精度モードは複数の画像処理で認識します。店名や日付が不明な場合は空欄にします。必ず領収書の原本と照合してから保存してください。</p>
+    <section class="trustBox" aria-label="読み取り確認"><strong>🔎 OCRの確認が必要な項目</strong><div id="ocrEvidence" class="evidence"><span class="hint">読み取ると項目別に目安が表示されます</span></div><p class="hint">信頼度は推定値です。T番号・金額・日付は原本を必ず目視で確認してね。</p></section>
+    <p class="hint">iPhone内で日本語＋英語の文字認識を実施。高精度モードは画像補正に加え、店名やT番号が見つからない場合に上部を拡大解析します。店名や日付が不明な場合は空欄にします。必ず領収書の原本と照合してから保存してください。</p>
     <div id="notice" role="status" aria-live="polite"></div>
     <details id="ocrDetails"><summary>読み取った文字を確認</summary><pre id="ocrText">まだ解析していません。</pre></details>
     <div class="sectionTitle">基本情報</div>
@@ -61,25 +80,49 @@ footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line
     <div class="grid"><div><label for="category">経費科目</label><select id="category"></select></div><div><label for="payment">支払方法</label><select id="payment"><option>未設定</option><option>現金</option><option>クレジットカード</option><option>デビットカード</option><option>電子マネー</option><option>QR決済</option><option>銀行振込</option><option>その他</option></select></div></div>
     <label for="customCategory">自分の経費科目を追加（任意）</label><div class="categoryRow"><input id="customCategory" placeholder="例 営業活動費" maxlength="30"><button type="button" class="secondary" id="addCategory">追加</button></div>
     <div class="sectionTitle">確定申告で役立つ追加項目</div>
-    <div class="grid"><div><label for="taxRate">消費税率（参考）</label><select id="taxRate"><option value="">不明・未設定</option><option value="10">10%</option><option value="8">8%（軽減）</option><option value="0">非課税・対象外</option><option value="mixed">混在</option></select></div><div><label for="taxAmount">消費税額（円）</label><input type="number" min="0" step="1" id="taxAmount" placeholder="例 180"></div><div><label for="businessRate">事業使用割合（%）</label><input type="number" id="businessRate" min="0" max="100" step="1" value="100"></div><div><label for="invoiceNo">適格請求書番号</label><input id="invoiceNo" placeholder="T1234567890123" maxlength="14"></div></div>
+    <div class="grid"><div><label for="taxRate">消費税率（参考）</label><select id="taxRate"><option value="">不明・未設定</option><option value="10">10%</option><option value="8">8%（軽減）</option><option value="0">非課税・対象外</option><option value="mixed">混在</option></select></div><div><label for="taxAmount">消費税額（円）</label><input type="number" min="0" step="1" id="taxAmount" placeholder="例 180"></div><div><label for="businessRate">事業使用割合（%）</label><input type="number" id="businessRate" min="0" max="100" step="1" value="100"></div><div><label for="invoiceNo">適格請求書番号</label><input id="invoiceNo" placeholder="T1234567890123 または数字13桁" maxlength="24" autocapitalize="characters" inputmode="text"></div></div>
     <p class="hint" id="businessAmount">経費計上の目安：¥0（事業使用割合100%）</p>
+    <div class="grid"><div><label for="receiptType">領収書の種類</label><select id="receiptType"><option>その他</option><option>高速道路・ETC</option><option>ガソリン</option><option>駐車場</option><option>コンビニ・スーパー</option><option>飲食</option><option>交通</option><option>通販</option><option>印刷・コピー</option></select></div><div><label>国税庁でT番号を照合</label><button class="secondary" type="button" id="checkInvoice" style="width:100%">公式検索を開く</button></div></div>
+    <p class="hint">国税庁の公式ページで番号（Tを除く13桁）と取引日当時の登録状況を確認し、確認済みのチェックを付けてね。API照合は未対応。</p>
+    <div class="checkrow"><input type="checkbox" id="invoiceVerified"><label for="invoiceVerified">T番号を公式サイトで照合した</label></div>
+    <div class="checkrow"><input type="checkbox" id="reviewed"><label for="reviewed">日付・金額・店名・税額を原本と照らして確認した</label></div>
+    <div class="checkrow"><input type="checkbox" id="learnVendor"><label for="learnVendor">この支払先の経費科目を次回から提案する</label></div>
     <label for="memo">メモ（任意）</label><textarea id="memo" placeholder="例 取引先訪問、家事按分の根拠など"></textarea>
     <div class="actions"><button id="save" type="button">💾 領収書を保存する</button></div>
+    <div id="saveStatus" class="saveStatus" role="status" aria-live="polite" aria-atomic="true"></div>
+    <p class="hint">T番号は数字13桁だけでもOK（保存時に「T」を付けます）。日付・金額が未入力の場合は、保存ボタンの下に理由が表示されます。</p>
+  </section>
+  <section class="panel"><h2>📚 まとめて読み取り（最大10枚・保存前に確認）</h2>
+    <label for="batchFiles">領収書の写真をまとめて選択</label><input id="batchFiles" type="file" accept="image/*" multiple>
+    <div class="actions"><button type="button" id="batchScan">まとめて読み取る</button><button type="button" class="ghost" id="batchCancel">停止</button></div>
+    <p class="hint">1枚ずつ順番に文字を認識し、確認待ちの候補として表示します。自動保存はしません。各候補を開いて、原本と照合してから保存してね。画面を閉じると未保存の候補は消えます。</p>
+    <p id="batchProgress" class="hint" role="status"></p><div id="batchQueue"></div>
   </section>
   <section class="panel"><h2>📊 月別・年間の集計</h2>
     <div class="grid"><div><label for="month">表示する月</label><input type="month" id="month"></div><div><label for="period">集計期間</label><select id="period"><option value="month">指定月</option><option value="year">指定年全体</option><option value="all">すべて</option></select></div></div>
     <label for="filter">経費科目で絞り込み</label><select id="filter"><option value="">すべての科目</option></select>
+    <details class="advancedBox"><summary>🔎 支払先・金額・日付・確認状態で検索</summary>
+      <label for="searchText">店名・購入内容・T番号</label><input id="searchText" placeholder="例 ENEOS / コピー代 / T123…">
+      <div class="grid"><div><label for="minAmount">金額の下限（円）</label><input id="minAmount" type="number" min="0"></div><div><label for="maxAmount">金額の上限（円）</label><input id="maxAmount" type="number" min="0"></div><div><label for="fromDate">開始日</label><input id="fromDate" type="date"></div><div><label for="toDate">終了日</label><input id="toDate" type="date"></div></div>
+      <label for="reviewFilter">原本確認状態</label><select id="reviewFilter"><option value="">すべて</option><option value="checked">原本確認済み</option><option value="pending">未確認</option></select>
+      <label for="invoiceFilter">T番号の公式照合状態</label><select id="invoiceFilter"><option value="">すべて</option><option value="verified">照合済み</option><option value="pending">未照合（T番号あり）</option></select>
+      <button type="button" class="ghost" id="clearSearch">検索条件をクリア</button>
+    </details>
     <div id="breakdown" style="margin-top:16px"></div>
+    <div id="advancedDashboard" class="dashBlock"></div>
     <div class="actions"><button id="csv" type="button" class="secondary">CSV出力</button><button id="xlsx" type="button" class="secondary">Excel出力（xlsx）</button></div>
     <p class="hint">日付・支払先・科目・購入内容・支払方法・税率・税額・事業使用割合・経費計上額・メモを出力します。CSVはExcelでも開けます。</p>
   </section>
   <section class="panel"><h2>🧾 保存した領収書</h2><div id="entries"></div></section>
   <section class="panel"><h2>💾 バックアップと復元</h2>
     <p class="hint"><strong>アップデート前や機種変更前はバックアップ推奨。</strong> 写真も含めてJSONに書き出します。データはGitHubではなく今使っているiPhone内に保存されます。Safariやホーム画面アプリのデータを削除すると消える場合があります。</p>
+    <p class="reminder" id="backupReminder" role="status"></p>
+    <p class="hint"><b>重要：</b>iPhoneのブラウザだけでiCloud Driveへ自動保存はできません。バックアップ作成を押して、ファイルをiCloud Drive等に保存してね。7日以上または20件以上で画面内にお知らせします。</p>
     <div class="actions"><button class="secondary" id="backup" type="button">バックアップを作成</button><button class="ghost" id="restore" type="button">バックアップから復元</button><input type="file" id="restoreFile" accept="application/json,.json" class="hidden"></div>
   </section>
 </div>
 <footer>無料・個人利用向け。読み取り結果、経費科目、税率・税額、事業使用割合はご自身で確認してください。このアプリは電子帳簿保存法への適合を保証しません。紙の領収書は保管してください。</footer>
-<script src="app.js?v=3-ocr"></script>
+<script src="app.js?v=10-all"></script>
+<script src="features.js?v=10-all"></script>
 </body>
 </html>
