@@ -1,8 +1,12 @@
 /index.html
   Cache-Control: no-cache, must-revalidate
+/install-icon.html
+  Cache-Control: no-cache, must-revalidate
 /manifest.webmanifest
   Cache-Control: no-cache, must-revalidate
-/icon.png
-  Cache-Control: no-cache, must-revalidate
+/apple-touch-icon-2026.png
+  Cache-Control: public, max-age=86400
 /apple-touch-icon.png
+  Cache-Control: no-cache, must-revalidate
+/sw.js
   Cache-Control: no-cache, must-revalidate
