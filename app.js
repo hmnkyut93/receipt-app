@@ -1,5 +1,5 @@
 'use strict';
-/* レシート帳 v10 — batch OCR review, confidence hints, backup reminders, advanced search and reports. Data stays local. */
+/* レシート帳 v12 — safe batch review/save, confidence hints, backup reminders, advanced search and reports. Data stays local. */
 const $=id=>document.getElementById(id);
 let db, all=[], selectedFile=null, selectedUrl=null, editId=null, cropBox=null, cropImg=null, cropDraft=null, cropDragging=false, lastOcrData=null, batchActiveIndex=null;
 const DEFAULT_CATEGORIES=['未分類','消耗品費','印刷製本費','旅費交通費','通信費','車両費','駐車場代','ガソリン代','高速道路料金','会議費','接待交際費','広告宣伝費','新聞図書費','水道光熱費','地代家賃','支払手数料','保険料','租税公課','修繕費','外注工賃','仕入高','荷造運賃','研修費','諸会費','福利厚生費','減価償却費','雑費','その他'];

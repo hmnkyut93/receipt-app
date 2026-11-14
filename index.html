@@ -46,10 +46,32 @@ footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line
 .batchCard button{margin-left:auto;min-height:35px;padding:7px 9px;font-size:12px}
 .batchCard .status{font-size:12px;color:#667b70}.reminder{font-weight:650;color:#9d4d1a;background:#fff6eb;padding:11px;border-radius:10px}
 @media(max-width:410px){.evidence{grid-template-columns:1fr}.batchCard img{width:40px;height:54px}}
+
+/* v12 batch candidates: compact cards with safe inline review/edit and explicit bulk save */
+.batchCandidate{padding:11px;margin:9px 0;border:1px solid #cbded3;border-radius:12px;background:#fbfdfa}
+.batchHead{display:flex;gap:9px;align-items:center}
+.batchHead img{width:55px;height:72px;flex:none;object-fit:cover;border-radius:7px;background:#ecf2ee;cursor:pointer}
+.batchHeadText{flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px}
+.batchHeadText .status{font-size:12px;color:#577065;margin-top:4px}
+.batchHead .danger{margin-left:auto;min-height:35px;padding:8px 12px;font-size:12px}
+.batchEdit{margin:10px 0 0;padding:8px 9px;background:#eff7f2}
+.batchEdit summary{font-size:14px;color:#155f4d}
+.batchInputs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 9px}
+.batchField{min-width:0;margin:8px 0 1px;font-size:12px}
+.batchField span{display:block;margin-bottom:4px}
+.batchField input,.batchField select{min-width:0;font-size:15px;padding:8px;min-height:40px}
+.batchApprove{display:flex;align-items:flex-start;gap:9px;margin:13px 0 4px;font-size:13px;color:#184a3e}
+.batchApprove input{width:22px;height:22px;min-height:22px;flex:none}
+.batchWarning{font-size:12px;color:#8b4c2d;line-height:1.45;margin:7px 0 9px}
+.batchEdit>button{width:100%;font-size:13px}
+.batchBottomActions{margin-top:11px;padding:12px;border:1px solid #b9d9c7;border-radius:12px;background:#f1faf4}
+.batchBottomActions button{width:100%;margin:4px 0}
+.batchBottomActions button:disabled{opacity:.5}
+@media(max-width:410px){.batchHead img{width:44px;height:60px}.batchHead .danger{padding:7px}.batchInputs{gap:0 6px}}
 </style>
 </head>
 <body>
-<header><div><h1>🧾 レシート帳 <span style="font-size:12px;font-weight:500;opacity:.8">v11</span></h1><p>領収書の撮影・仕分け・月別集計｜データはこの端末に保存</p></div></header>
+<header><div><h1>🧾 レシート帳 <span style="font-size:12px;font-weight:500;opacity:.8">v12</span></h1><p>領収書の撮影・仕分け・月別集計｜データはこの端末に保存</p></div></header>
 <div class="wrap">
   <div class="stats">
     <div class="stat"><span id="totalLabel">表示期間の経費</span><strong id="total">¥0</strong><em id="totalPaid">支払総額 ¥0</em></div>
@@ -93,11 +115,18 @@ footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line
     <div id="saveStatus" class="saveStatus" role="status" aria-live="polite" aria-atomic="true"></div>
     <p class="hint">T番号は数字13桁だけでもOK（保存時に「T」を付けます）。日付・金額が未入力の場合は、保存ボタンの下に理由が表示されます。</p>
   </section>
-  <section class="panel"><h2>📚 まとめて読み取り（最大10枚・保存前に確認）</h2>
+  <section class="panel"><h2>📚 まとめて読み取り・一括保存（最大10枚）</h2>
     <label for="batchFiles">領収書の写真をまとめて選択</label><input id="batchFiles" type="file" accept="image/*" multiple>
     <div class="actions"><button type="button" id="batchScan">まとめて読み取る</button><button type="button" class="ghost" id="batchCancel">停止</button></div>
-    <p class="hint">1枚ずつ順番に文字を認識し、確認待ちの候補として表示します。自動保存はしません。各候補を開いて、原本と照合してから保存してね。画面を閉じると未保存の候補は消えます。</p>
-    <p id="batchProgress" class="hint" role="status"></p><div id="batchQueue"></div>
+    <p class="hint">読取候補をその場で修正できます。写真と照合した候補だけチェックを付け、「確認済みをまとめて保存」を押してね。間違った候補は削除できます。未保存の候補は画面を閉じると消えます。</p>
+    <p id="batchProgress" class="hint" role="status" aria-live="polite"></p>
+    <div id="batchQueue"></div>
+    <div class="batchBottomActions">
+      <p id="batchSelected" class="hint">確認済み 0件／未保存 0件／保存済み 0件</p>
+      <button type="button" id="batchSaveAll" disabled>💾 確認済みをまとめて保存（0件）</button>
+      <button type="button" id="batchClearAll" class="ghost" disabled>未保存の候補をすべて破棄</button>
+      <p class="hint">一括保存ではT番号の公式照合までは行いません。保存済みの領収書の削除は、下の「保存した領収書」からできます。</p>
+    </div>
   </section>
   <section class="panel"><h2>📊 月別・年間の集計</h2>
     <div class="grid"><div><label for="month">表示する月</label><input type="month" id="month"></div><div><label for="period">集計期間</label><select id="period"><option value="month">指定月</option><option value="year">指定年全体</option><option value="all">すべて</option></select></div></div>
@@ -123,7 +152,7 @@ footer{text-align:center;color:#728077;font-size:11px;padding:7px 17px 26px;line
   </section>
 </div>
 <footer>無料・個人利用向け。読み取り結果、経費科目、税率・税額、事業使用割合はご自身で確認してください。このアプリは電子帳簿保存法への適合を保証しません。紙の領収書は保管してください。</footer>
-<script src="app.js?v=11-ocr"></script>
-<script src="features.js?v=11-ocr"></script>
+<script src="app.js?v=12-batch"></script>
+<script src="features.js?v=12-batch"></script>
 </body>
 </html>
