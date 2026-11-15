@@ -1,5 +1,5 @@
 'use strict';
-/* レシート帳 v13: local-only enhancements including camera multi-shot batch queue. OCR is advisory. */
+/* レシート帳 v15: local-only enhancements including camera multi-shot batch queue. OCR is advisory. */
 const VENDOR_RULE_KEY='receipt-vendor-categories-v10';
 const BACKUP_KEY='receipt-last-backup-v10';
 const pendingBatch=[];
@@ -350,41 +350,17 @@ $('batchScan').onclick=async()=>{
    if(batchCancelled)break;
    const shot=shots[i],file=shot.file;
    $('batchProgress').textContent=`${shots.length}枚中 ${i+1}枚目を解析中。終了した候補から確認できるよ。`;
-   const preview=shot.preview;let parsed=null,status='pending',pages=[];
+   const preview=shot.preview;let parsed=null,status='pending';
    try{
-    const img=await decodeImage(file);const trimmed=$('autoTrim').checked?autoTrimReceiptSource(img):img;
-    const source=$('autoTrim').checked?autoCropHorizontalReceiptSource(trimmed):trimmed;pages=canvasPagesForOcr(source,0);
-    const raw=[];
-    for(const page of pages){if(batchCancelled)break;raw.push((await worker.recognize(page)).data.text)}
-    parsed=parseReceipt(raw.join('\n'));
-    if(!batchCancelled&&(!parsed.fields.invoiceNo||!parsed.fields.date||!parsed.fields.store||!parsed.fields.taxAmount)){
-     await worker.setParameters({tessedit_pageseg_mode:'6'});
-     const upper=focusedCanvasForOcr(source,0,0,.46);try{
-      const extra=parseReceipt((await worker.recognize(upper)).data.text);
-      for(const k of ['store','invoiceNo'])if(extra.fields[k]&&(!parsed.fields[k]||extra.fields[k].score>parsed.fields[k].score+25))parsed.fields[k]=extra.fields[k];
-      if(!parsed.fields.date&&extra.fields.date)parsed.fields.date=extra.fields.date;
-      parsed.raw+='\n[上部拡大]\n'+extra.raw;
-     }finally{upper.width=0;upper.height=0}
-     if(!parsed.fields.date&&!batchCancelled){
-      const lower=focusedCanvasForOcr(source,0,.43,.95);try{
-       const extra=parseReceipt((await worker.recognize(lower)).data.text);
-       if(extra.fields.date)parsed.fields.date=extra.fields.date;
-       parsed.raw+='\n[下部の日付再解析]\n'+extra.raw;
-      }finally{lower.width=0;lower.height=0}
-     }
-     if(!batchCancelled&&(!parsed.fields.invoiceNo||!parsed.fields.store||!parsed.fields.taxAmount)){
-      const middle=focusedCanvasForOcr(source,0,.18,.98);
-      try{
-       const extra=parseReceipt((await worker.recognize(middle)).data.text);
-       for(const k of ['store','invoiceNo','taxAmount'])if(extra.fields[k]&&(!parsed.fields[k]||extra.fields[k].score>parsed.fields[k].score+25))parsed.fields[k]=extra.fields[k];
-       parsed.raw+='\n[中央〜下部の再解析]\n'+extra.raw;
-      }finally{middle.width=0;middle.height=0}
-     }
-     await worker.setParameters({tessedit_pageseg_mode:'11'});
-    }
+    parsed=await scanReceiptWithWorker(file,worker,{
+     rotation:0,trim:$('autoTrim').checked,fast:$('ocrMode').value==='fast',
+     cancelled:()=>batchCancelled,
+     notify:label=>{$('batchProgress').textContent=`${shots.length}枚中 ${i+1}枚目：${label}…`}
+    });
+    if(ocrMissingSummary(parsed).length)parsed.reviewWarnings=ocrMissingSummary(parsed);
+
    }catch(e){status='error';parsed={fields:{},raw:'エラー：'+(e?.message||e)}}
-   finally{for(const page of pages){page.width=0;page.height=0}}
-   pendingBatch.push({file,preview,parsed,status,approved:false,draft:batchDraftFromParsed(parsed),warning:''});
+   pendingBatch.push({file,preview,parsed,status,approved:false,draft:batchDraftFromParsed(parsed),warning:(parsed?.reviewWarnings?.length?'要確認：'+parsed.reviewWarnings.join('・'):'')});
    // The thumbnail URL is transferred to the review candidate; do not revoke it here.
    const stagedIndex=stagedBatch.indexOf(shot);
    if(stagedIndex>=0)stagedBatch.splice(stagedIndex,1);

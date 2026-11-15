@@ -511,9 +511,147 @@ function suggestCategoryV6(text){
  for(const [re,value] of rules)if(re.test(t))return {value,score:74};
  return suggestCategory(t);
 }
+// v15 — Parse amounts even when OCR inserts spaces inside a comma-grouped price.
+// Only recover a bare price when it is linked to a receipt-total/領収証 heading.
+function yenMoneyTokens(line){
+ const text=String(line||'').normalize('NFKC'),out=[];
+ for(const m of text.matchAll(/[¥\\]\s*([0-9]{1,3}(?:\s*[,，.．]\s*[0-9]{3})+|[0-9]{1,9})(?!\d)(?:\s*[-－―円])?/g)){
+  const value=Number(m[1].replace(/[\s,，.．]/g,''));
+  if(Number.isSafeInteger(value)&&value>0&&value<=99999999)out.push({value,why:line,index:m.index||0});
+ }
+ return out;
+}
+function findAmountV15(lines){
+ const old=findAmountV6(lines),candidates=[];
+ if(old)candidates.push({...old,score:old.score});
+ const negative=/(?:税額|消費税|内税|外税|本体|税抜|小計|釣銭|お釣|預り|割引|値引|ポイント|TEL|電話|登録|インボイス|T\d{10}|伝票|レジ|カード番号|数量|単価)/i;
+ const positive=/(?:お支払|お会計|総合計|合\s*計|請求金額|領収(?:金額)?|料金|現計|TOTAL|AMOUNT DUE)/i;
+ for(let i=0;i<lines.length;i++){
+  const line=lines[i],near=(lines.slice(Math.max(0,i-3),i+1).join(' '));
+  if(negative.test(line))continue;
+  for(const token of yenMoneyTokens(line)){
+   // A yen-marked price beside the receipt-title is strong evidence even
+   // when the OCR fails to read the word "total" on the same line.
+   let score=68+(positive.test(line)?90:0)+(positive.test(near)?32:0);
+   if(/(?:領収証|領収書|御領収|RECEIPT)/i.test(near))score+=52;
+   if(token.value<100)score-=20;
+   candidates.push({value:token.value,score,why:line});
+  }
+ }
+ candidates.sort((a,b)=>b.score-a.score||b.value-a.value);
+ const best=candidates[0];if(!best)return null;
+ // If independent equally plausible readings disagree, ask the user to inspect.
+ if(candidates.some(x=>x!==best&&x.value!==best.value&&Math.abs(x.score-best.score)<5&&x.score>105))return null;
+ return best;
+}
+function findTaxV15(lines,amount){
+ const old=findTaxV6(lines,amount),out=old?[old]:[];
+ const word=/(?:消費税|内税|税額|税合計)/i;
+ for(let i=0;i<lines.length;i++){
+  const l=lines[i];if(!word.test(l)||/登録番号|納税者番号/.test(l))continue;
+  for(const token of yenMoneyTokens(l)){
+   const before=l.slice(0,token.index);
+   if(!word.test(before)||amount!=null&&token.value>amount)continue;
+   if(amount!=null&&token.value/amount>.12)continue;
+   out.push({value:token.value,score:175,why:l});
+  }
+ }
+ return out.sort((a,b)=>b.score-a.score)[0]||null;
+}
+function findStoreV15(lines){
+ const found=findStoreV11(lines);
+ // A split named store can be recovered, but never guess a brand based on
+ // an address or a branch alone.
+ const joined=lines.map(x=>x.trim()).join(' ');
+ const m=joined.match(/(ビッグ\s*ウッド\s*[一-龥ぁ-んァ-ヶー]{2,16}店)/);
+ if(m){const candidate={value:m[1].replace(/\s+/g,''),score:152,why:m[0]};return found&&found.score>candidate.score?found:candidate}
+ return found;
+}
+// Compare two OCR passes conservatively: do not quietly choose a conflicting T-number.
+function mergeReceiptReadings(base,more,keys){
+ const changes=[];
+ for(const key of keys){
+  const a=base.fields[key],b=more.fields[key];
+  if(!b)continue;
+  if(a&&a.value!==b.value&&key==='invoiceNo'){
+   base.fields.invoiceNo=null;
+   base._invoiceConflict=true;
+   changes.push('T番号の候補が一致しません');
+   continue;
+  }
+  if(base._invoiceConflict&&key==='invoiceNo')continue;
+  if(!a||a.value!==b.value&&(b.score||0)>(a.score||0)+22)base.fields[key]=b;
+ }
+ base.raw+='\n\n[必要箇所の再解析]\n'+more.raw;
+ return changes;
+}
+function needsAmountReview(parsed){
+ const amount=parsed?.fields?.amount?.value;
+ return !Number.isSafeInteger(amount)||amount<=0||amount<100||
+  (parsed?.fields?.taxAmount?.value!=null&&amount<=parsed.fields.taxAmount.value);
+}
+function ocrMissingSummary(parsed){
+ const f=parsed.fields,missing=[];
+ for(const [key,label] of [['date','日付'],['amount','支払金額'],['store','店名'],['taxAmount','消費税額'],['invoiceNo','T番号']])if(!f[key])missing.push(label);
+ if(f.amount&&f.amount.value<100)missing.push('100円未満の金額（原本確認）');
+ if(parsed._invoiceConflict)missing.push('T番号に複数の候補（原本確認）');
+ return missing;
+}
+// Long, high-resolution iPhone photos slow Japanese OCR greatly. Limit only
+// the first pass; focused retries use separate, sharper crops of the source.
+function optimizeOcrPages(pages){
+ return pages.map(c=>{
+  const scale=Math.min(1,2100/Math.max(c.width,c.height));
+  if(scale>=.96)return c;
+  const resized=document.createElement('canvas');resized.width=Math.max(1,Math.round(c.width*scale));resized.height=Math.max(1,Math.round(c.height*scale));
+  resized.getContext('2d').drawImage(c,0,0,resized.width,resized.height);c.width=0;c.height=0;return resized;
+ });
+}
+async function scanReceiptWithWorker(file,worker,{rotation=0,crop=null,trim=true,fast=false,notify=()=>{},cancelled=()=>false}={}){
+ let pages=[];
+ try{
+  const img=await decodeImage(file);
+  const cropped=cropImageSource(img,crop),trimmed=(!crop&&trim)?autoTrimReceiptSource(cropped):cropped;
+  const source=(!crop&&trim&&rotation%180===0)?autoCropHorizontalReceiptSource(trimmed):trimmed;
+  pages=optimizeOcrPages(canvasPagesForOcr(source,rotation));
+  await worker.setParameters({preserve_interword_spaces:'1',tessedit_pageseg_mode:'11'});
+  const texts=[];
+  for(let i=0;i<pages.length;i++){
+   if(cancelled())throw Error('読み取りを停止しました');
+   notify(`文字認識 ${i+1}/${pages.length}`);
+   texts.push((await worker.recognize(pages[i])).data.text||'');
+  }
+  const result=parseReceipt(texts.join('\n'));
+  if(fast||cancelled())return result;
+  // Targeted fallback, never run a second full-image enhanced pass.
+  const f=result.fields;
+  if(!f.date||!f.store||needsAmountReview(result)){
+   notify('金額・店名・日付を部分再解析');
+   const c=focusedCanvasForOcr(source,rotation,.02,.70);
+   try{
+    await worker.setParameters({tessedit_pageseg_mode:'6'});
+    const extra=parseReceipt((await worker.recognize(c)).data.text||'');
+    mergeReceiptReadings(result,extra,['amount','store','date','taxAmount','invoiceNo']);
+   }finally{c.width=0;c.height=0}
+  }
+  if(cancelled())return result;
+  // Invoices and tax figures are often at the bottom. One bottom crop only,
+  // not repeated full-page OCR and 2-3 overlapping extra passes.
+  if(!result.fields.invoiceNo||!result.fields.taxAmount){
+   notify('下部のT番号・税額を部分再解析');
+   const c=focusedCanvasForOcr(source,rotation,.43,.99);
+   try{
+    await worker.setParameters({tessedit_pageseg_mode:'6'});
+    const extra=parseReceipt((await worker.recognize(c)).data.text||'');
+    mergeReceiptReadings(result,extra,['invoiceNo','taxAmount','store','amount','date']);
+   }finally{c.width=0;c.height=0}
+  }
+  return result;
+ }finally{for(const c of pages){c.width=0;c.height=0}}
+}
 function parseReceipt(text){const normalized=normalizeText(text);const lines=normalized.split(/\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
- const total=findAmountV6(lines),tax=findTaxV6(lines,total?.value);
- const fields={date:findDateV11(lines),amount:total,store:findStoreV11(lines),taxAmount:tax,invoiceNo:findInvoiceV6(normalized),payment:findPayment(normalized),taxRate:findTaxRate(normalized),category:suggestCategoryV6(normalized)};
+ const total=findAmountV15(lines),tax=findTaxV15(lines,total?.value);
+ const fields={date:findDateV11(lines),amount:total,store:findStoreV15(lines),taxAmount:tax,invoiceNo:findInvoiceV6(normalized),payment:findPayment(normalized),taxRate:findTaxRate(normalized),category:suggestCategoryV6(normalized)};
  if(fields.taxAmount&&fields.amount){
   const tax=fields.taxAmount.value,total=fields.amount.value;
   if(tax>total||tax<total*.0005||tax>total*.12)fields.taxAmount=null;
@@ -531,85 +669,28 @@ function mergeFields(one,two){const data={};for(const field of ['date','amount',
 $('ocr').onclick=async()=>{
  if(!selectedFile){notice('先に領収書の写真を選んでください');return}
  const btn=$('ocr');btn.disabled=true;btn.textContent='解析中…';let worker;
- let pages=[];
  try{
-  const img=await decodeImage(selectedFile),rotation=Number($('rotation').value)||0;
-  // Prefer explicit receipt-region crop over full background.
-  const manuallyCropped=cropImageSource(img,cropBox);
-  const trimmed=(!cropBox&&$('autoTrim').checked)?autoTrimReceiptSource(manuallyCropped):manuallyCropped;
-  const source=(!cropBox&&$('autoTrim').checked&&rotation%180===0)?autoCropHorizontalReceiptSource(trimmed):trimmed;
-  pages=canvasPagesForOcr(source,rotation);
-  notice('文字認識の準備をしています…');
+  notice('日本語文字認識を準備しています…');
   if(!window.Tesseract)await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
-  worker=await Tesseract.createWorker('jpn+eng',1,{logger:msg=>{if(msg.status==='recognizing text')notice(`文字認識中：${Math.round(msg.progress*100)}%\n完了後、金額・日付・店名を確認してね。`)}});
-  await worker.setParameters({preserve_interword_spaces:'1',tessedit_pageseg_mode:'11'});
-  const rawOne=[];
-  for(let i=0;i<pages.length;i++){
-   notice(`領収書の文字を読み取り中（${i+1}/${pages.length}）…`);
-   rawOne.push((await worker.recognize(pages[i])).data.text);
-  }
-  const first=parseReceipt(rawOne.join('\n'));
-  let second=null;
-  if($('ocrMode').value==='high'){
-   await worker.setParameters({tessedit_pageseg_mode:'6'});
-   const rawTwo=[];
-   for(let i=0;i<pages.length;i++){
-    notice(`補正した画像を再解析中（${i+1}/${pages.length}）…`);
-    const enhanced=enhancedCanvas(pages[i]);rawTwo.push((await worker.recognize(enhanced)).data.text);
-    enhanced.width=0;enhanced.height=0;
-   }
-   second=parseReceipt(rawTwo.join('\n'));
-  }
-  let data=mergeFields(first,second),third=null,fourth=null;
-  if($('ocrMode').value==='high'&&(!data.store||!data.invoiceNo||!data.date)){
-   notice('領収書の上部（店名・T番号）を拡大しています…');
-   const upper=focusedCanvasForOcr(source,rotation,0,.46);
-   try{
-    await worker.setParameters({tessedit_pageseg_mode:'6'});
-    third=parseReceipt((await worker.recognize(upper)).data.text);
-    for(const key of ['store','invoiceNo'])if(third.fields[key]&&(!data[key]||third.fields[key].score>data[key].score+25))data[key]=third.fields[key];
-    if(!data.date&&third.fields.date)data.date=third.fields.date;
-   }finally{upper.width=0;upper.height=0}
-  }
-  if($('ocrMode').value==='high'&&!data.date){
-   notice('領収書の下部（日付）を拡大しています…');
-   const lower=focusedCanvasForOcr(source,rotation,.43,.95);
-   try{
-    await worker.setParameters({tessedit_pageseg_mode:'6'});
-    fourth=parseReceipt((await worker.recognize(lower)).data.text);
-    if(fourth.fields.date)data.date=fourth.fields.date;
-   }finally{lower.width=0;lower.height=0}
-  }
-  let fifth=null;
-  if($('ocrMode').value==='high'&&(!data.store||!data.invoiceNo||!data.taxAmount)){
-   notice('領収証の中央〜下部（店名・税額・T番号）を拡大して確認中…');
-   const middle=focusedCanvasForOcr(source,rotation,.18,.98);
-   try{
-    await worker.setParameters({tessedit_pageseg_mode:'6'});
-    fifth=parseReceipt((await worker.recognize(middle)).data.text);
-    for(const key of ['store','invoiceNo','taxAmount']){
-     const v=fifth.fields[key];if(v&&(!data[key]||v.score>data[key].score+25))data[key]=v;
-    }
-   }finally{middle.width=0;middle.height=0}
-  }
-  // Never allow the initial value (today) or a previous scan's values to masquerade as OCR results.
+  worker=await Tesseract.createWorker('jpn+eng',1);
+  const parsed=await scanReceiptWithWorker(selectedFile,worker,{
+   rotation:Number($('rotation').value)||0,crop:cropBox,trim:$('autoTrim').checked,
+   fast:$('ocrMode').value==='fast',notify:status=>notice(status+'…')
+  });
+  const data=parsed.fields;
   for(const key of ['date','amount','store','taxAmount','invoiceNo'])$(key).value=data[key]?.value??'';
   if(data.invoiceNo)$('invoiceNo').value=normalizeInvoiceInput(data.invoiceNo.value);
   for(const key of ['payment','taxRate'])$(key).value=data[key]?.value??(key==='payment'?'未設定':'');
   $('category').value=suggestVendorCategory(data.store?.value)||data.category?.value||'未分類';
-  $('receiptType').value=guessReceiptType(first.raw+' '+(second?.raw||''));
+  $('receiptType').value=guessReceiptType(parsed.raw);
   $('reviewed').checked=false;$('invoiceVerified').checked=false;lastOcrData=data;renderOcrEvidence(data);
-  if(/(?:コピー代|コピ一代|コピー料金|複写代)/.test((first.raw||'')+' '+(second?.raw||'')+' '+(third?.raw||'')))$('detail').value='コピー代';
-  else $('detail').value='';
-  $('ocrText').textContent=first.raw+(second?'\n\n===== 補正画像の認識結果 =====\n'+second.raw:'')+(third?'\n\n===== 上部の再解析 =====\n'+third.raw:'')+(fourth?'\n\n===== 下部の日付の再解析 =====\n'+fourth.raw:'')+(fifth?'\n\n===== 中央〜下部の再解析 =====\n'+fifth.raw:'');
-  updateBusinessEstimate();
-  const missing=[];if(!data.date)missing.push('日付');if(!data.amount)missing.push('金額');if(!data.store)missing.push('店名');
-  if(!data.invoiceNo||!data.taxAmount)showSaveStatus('T番号や消費税額を認識できなかったときは空欄のままです。高速道路・ガソリン等でも原本と照合して保存してね。','info');
-  const unresolved=missing.length?'未認識または判定が一致しない項目：'+missing.join('・')+'。':'主要3項目を入力しました。';
-  const help=!cropBox?'\n背景が多い写真は「領収書だけを囲んで読み取る」を使うと改善することがあります。':'';
-  notice('読み取り完了。'+unresolved+help+'\n日付が取れない場合は空欄にしています。間違った値がないか原本で確認してね。');
+  $('detail').value=/(?:コピー代|コピ一代|コピー料金|複写代)/.test(parsed.raw)?'コピー代':'';
+  $('ocrText').textContent=parsed.raw;updateBusinessEstimate();
+  const missing=ocrMissingSummary(parsed);
+  if(missing.length){showSaveStatus('原本との照合が必要：'+missing.join('・')+'。\n数字を推測で埋めず、必ず写真と確認してね。','info')}
+  notice('読み取り完了。'+(missing.length?'確認が必要：'+missing.join('・'):'主要項目の候補を取得しました。')+'\n保存前に原本と照合してね。');
  }catch(e){notice('読み取りできませんでした：'+(e.message||e)+'\n写真を明るく撮る・領収書部分を囲む・手入力を試してください。')}
- finally{for(const page of pages){page.width=0;page.height=0}if(worker)try{await worker.terminate()}catch{}btn.disabled=false;btn.textContent='🔍 写真から自動入力'}
+ finally{if(worker)try{await worker.terminate()}catch{}btn.disabled=false;btn.textContent='🔍 写真から自動入力'}
 };
 function filtered(){const month=$('month').value,period=$('period').value,c=$('filter').value;return all.filter(x=>{const date=String(x.date||'');const inPeriod=period==='all'||(period==='year'?date.startsWith(month.slice(0,4)):date.startsWith(month));return inPeriod&&(!c||x.category===c)&&advancedReceiptFilter(x)}).sort((a,b)=>String(b.date).localeCompare(String(a.date)))}
 function render(){const rows=filtered();const paid=rows.reduce((n,x)=>n+Number(x.amount||0),0),expensed=rows.reduce((n,x)=>n+businessAmount(x.amount,x.businessRate==null?100:x.businessRate),0);

@@ -1,5 +1,5 @@
-const CACHE='receipt-ledger-v14-ocr-20261115';
-const RESOURCES=['./','./index.html','./app.js?v=14-ocr-paper','./features.js?v=14-ocr-paper','./manifest.webmanifest?v=12-iconfix-20261115','./apple-touch-icon.png?v=12-iconfix-20261115','./icon-192.png','./icon-512.png','./favicon.png?v=12-iconfix-20261115'];
+const CACHE='receipt-ledger-v15-ocr-20261115';
+const RESOURCES=['./','./index.html','./app.js?v=15-ocr-targeted','./features.js?v=15-ocr-targeted','./manifest.webmanifest?v=12-iconfix-20261115','./apple-touch-icon.png?v=12-iconfix-20261115','./icon-192.png','./icon-512.png','./favicon.png?v=12-iconfix-20261115'];
 self.addEventListener('install', event=>{event.waitUntil((async()=>{const cache=await caches.open(CACHE);for(const resource of RESOURCES){try{await cache.add(resource)}catch(e){/* optional asset can be absent */}}await self.skipWaiting()})());});
 self.addEventListener('activate', event=>{event.waitUntil((async()=>{for(const key of await caches.keys()){if(key.startsWith('receipt-ledger-')&&key!==CACHE)await caches.delete(key)}await self.clients.claim();})());});
 self.addEventListener('fetch',event=>{if(event.request.method!=='GET')return;const url=new URL(event.request.url);if(url.origin!==self.location.origin||!url.pathname.startsWith(new URL(self.registration.scope).pathname))return;event.respondWith((async()=>{try{const res=await fetch(event.request);if(res.ok){const cache=await caches.open(CACHE);await cache.put(event.request,res.clone())}return res}catch(e){return (await caches.match(event.request))||Response.error()}})());});
