@@ -93,6 +93,45 @@ function autoTrimReceiptSource(img){
  crop.getContext('2d',{willReadFrequently:true}).drawImage(img,x1*w/sw,0,(x2-x1)*w/sw,h,0,0,crop.width,h);
  return crop;
 }
+// v14: Detect a bright horizontal receipt surrounded by darker tabletop.
+// Crop only when the contrast and two outside margins are unambiguous.
+// This never changes the stored original photo; it affects OCR input only.
+function autoCropHorizontalReceiptSource(img){
+ const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
+ if(w<300||h<450||h/w<.7)return img;
+ const sw=160,sh=160,c=document.createElement('canvas');c.width=sw;c.height=sh;
+ const ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(img,0,0,sw,sh);
+ const p=ctx.getImageData(0,0,sw,sh).data,rows=[];
+ for(let y=0;y<sh;y++){
+  let sum=0,count=0;
+  for(let x=16;x<sw-16;x+=3){const i=(y*sw+x)*4;sum+=p[i]*.299+p[i+1]*.587+p[i+2]*.114;count++}
+  rows.push(sum/count);
+ }
+ const avg=(s,e)=>rows.slice(s,e).reduce((a,b)=>a+b,0)/Math.max(1,e-s);
+ const outside=(avg(1,19)+avg(141,159))/2;
+ // A white page already fills the frame, or contrast is insufficient.
+ if(outside>180)return img;
+ const threshold=Math.max(181,outside+28);
+ const smooth=rows.map((_,y)=>avg(Math.max(0,y-3),Math.min(sh,y+4)));
+ let best=null,start=-1,gap=0;
+ for(let y=0;y<=sh;y++){
+  const bright=y<sh&&smooth[y]>threshold;
+  if(bright){if(start<0)start=y;gap=0}
+  else if(start>=0){gap++;if(gap>5||y===sh){const end=y-gap+1,span=end-start;
+   if(span>=sh*.15&&(!best||span>best.span))best={start,end,span};
+   start=-1;gap=0;
+  }}
+ }
+ if(!best||best.span>sh*.76||best.start<sh*.07||best.end>sh*.93)return img;
+ const center=avg(best.start,best.end);
+ if(center<outside+30)return img;
+ const pad=7,startY=Math.max(0,best.start-pad),endY=Math.min(sh,best.end+pad);
+ const y1=Math.floor(startY*h/sh),cropH=Math.ceil((endY-startY)*h/sh);
+ if(cropH<=0||cropH>h*.91)return img;
+ const out=document.createElement('canvas');out.width=w;out.height=Math.min(h-y1,cropH);
+ out.getContext('2d',{willReadFrequently:true}).drawImage(img,0,y1,w,out.height,0,0,w,out.height);
+ return out;
+}
 // Re-scan the upper store and the lower date separately. Neither pass makes up missing text.
 function focusedCanvasForOcr(img,rotation,start,end){
  const full=canvasForImage(img,rotation),y=Math.round(full.height*start),height=Math.max(1,Math.round(full.height*end)-y);
@@ -497,7 +536,8 @@ $('ocr').onclick=async()=>{
   const img=await decodeImage(selectedFile),rotation=Number($('rotation').value)||0;
   // Prefer explicit receipt-region crop over full background.
   const manuallyCropped=cropImageSource(img,cropBox);
-  const source=(!cropBox&&$('autoTrim').checked)?autoTrimReceiptSource(manuallyCropped):manuallyCropped;
+  const trimmed=(!cropBox&&$('autoTrim').checked)?autoTrimReceiptSource(manuallyCropped):manuallyCropped;
+  const source=(!cropBox&&$('autoTrim').checked&&rotation%180===0)?autoCropHorizontalReceiptSource(trimmed):trimmed;
   pages=canvasPagesForOcr(source,rotation);
   notice('文字認識の準備をしています…');
   if(!window.Tesseract)await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
@@ -540,6 +580,18 @@ $('ocr').onclick=async()=>{
     if(fourth.fields.date)data.date=fourth.fields.date;
    }finally{lower.width=0;lower.height=0}
   }
+  let fifth=null;
+  if($('ocrMode').value==='high'&&(!data.store||!data.invoiceNo||!data.taxAmount)){
+   notice('領収証の中央〜下部（店名・税額・T番号）を拡大して確認中…');
+   const middle=focusedCanvasForOcr(source,rotation,.18,.98);
+   try{
+    await worker.setParameters({tessedit_pageseg_mode:'6'});
+    fifth=parseReceipt((await worker.recognize(middle)).data.text);
+    for(const key of ['store','invoiceNo','taxAmount']){
+     const v=fifth.fields[key];if(v&&(!data[key]||v.score>data[key].score+25))data[key]=v;
+    }
+   }finally{middle.width=0;middle.height=0}
+  }
   // Never allow the initial value (today) or a previous scan's values to masquerade as OCR results.
   for(const key of ['date','amount','store','taxAmount','invoiceNo'])$(key).value=data[key]?.value??'';
   if(data.invoiceNo)$('invoiceNo').value=normalizeInvoiceInput(data.invoiceNo.value);
@@ -549,7 +601,7 @@ $('ocr').onclick=async()=>{
   $('reviewed').checked=false;$('invoiceVerified').checked=false;lastOcrData=data;renderOcrEvidence(data);
   if(/(?:コピー代|コピ一代|コピー料金|複写代)/.test((first.raw||'')+' '+(second?.raw||'')+' '+(third?.raw||'')))$('detail').value='コピー代';
   else $('detail').value='';
-  $('ocrText').textContent=first.raw+(second?'\n\n===== 補正画像の認識結果 =====\n'+second.raw:'')+(third?'\n\n===== 上部の再解析 =====\n'+third.raw:'')+(fourth?'\n\n===== 下部の日付の再解析 =====\n'+fourth.raw:'');
+  $('ocrText').textContent=first.raw+(second?'\n\n===== 補正画像の認識結果 =====\n'+second.raw:'')+(third?'\n\n===== 上部の再解析 =====\n'+third.raw:'')+(fourth?'\n\n===== 下部の日付の再解析 =====\n'+fourth.raw:'')+(fifth?'\n\n===== 中央〜下部の再解析 =====\n'+fifth.raw:'');
   updateBusinessEstimate();
   const missing=[];if(!data.date)missing.push('日付');if(!data.amount)missing.push('金額');if(!data.store)missing.push('店名');
   if(!data.invoiceNo||!data.taxAmount)showSaveStatus('T番号や消費税額を認識できなかったときは空欄のままです。高速道路・ガソリン等でも原本と照合して保存してね。','info');

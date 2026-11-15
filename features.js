@@ -1,5 +1,5 @@
 'use strict';
-/* レシート帳 v10: local-only enhancements. OCR is advisory, never a verified tax record. */
+/* レシート帳 v13: local-only enhancements including camera multi-shot batch queue. OCR is advisory. */
 const VENDOR_RULE_KEY='receipt-vendor-categories-v10';
 const BACKUP_KEY='receipt-last-backup-v10';
 const pendingBatch=[];
@@ -100,9 +100,62 @@ for(const id of ['searchText','minAmount','maxAmount','fromDate','toDate','revie
 }
 $('clearSearch').onclick=()=>{for(const id of ['searchText','minAmount','maxAmount','fromDate','toDate'])$(id).value='';$('reviewFilter').value='';$('invoiceFilter').value='';render()};
 
+// v13: Native iPhone camera selects one file per capture. Stage each file instead
+// of saving it immediately; album files enter the same queue. File objects and
+// preview URLs are never persisted until the user explicitly approves saving.
+let batchSaving=false;
+const stagedBatch=[];
+const MAX_STAGED=10;
+function isReceiptImage(file){
+ return !!file && (String(file.type||'').startsWith('image/')||/\.(?:jpe?g|png|webp|heic|heif)$/i.test(file.name||''));
+}
+function renderStagedBatch(){
+ const container=$('batchStagedList');container.replaceChildren();
+ $('batchStagedCount').textContent=`読み取り待ち：${stagedBatch.length} / ${MAX_STAGED}枚。写真はまだ保存されていません。最後に確認済みをまとめて保存してね。`;
+ $('batchScan').disabled=!stagedBatch.length||batchRunning||batchSaving;
+ $('batchCamera').disabled=batchRunning||batchSaving||stagedBatch.length>=MAX_STAGED;
+ $('batchFiles').disabled=batchRunning||batchSaving||stagedBatch.length>=MAX_STAGED;
+ for(let i=0;i<stagedBatch.length;i++){
+  const item=stagedBatch[i],card=createEl('div',null,'batchStageItem');
+  const img=document.createElement('img');img.src=item.preview;img.alt=`撮影・選択した領収書 ${i+1}枚目`;card.append(img);
+  const label=createEl('span',`${i+1}枚目：${item.file.name||'写真'}`);card.append(label);
+  const remove=createEl('button','取り消す','danger');remove.type='button';remove.disabled=batchRunning||batchSaving;
+  remove.setAttribute('aria-label',`${i+1}枚目の写真を取り消す`);
+  remove.onclick=()=>{
+   if(batchRunning||batchSaving)return;
+   const index=stagedBatch.indexOf(item);if(index<0)return;
+   stagedBatch.splice(index,1);URL.revokeObjectURL(item.preview);renderStagedBatch();updateBatchButtons();
+   $('batchProgress').textContent=`${i+1}枚目の読み取り待ち写真を取り消しました。保存済みの領収書には影響しません。`;
+  };
+  card.append(remove);container.append(card);
+ }
+}
+function stageBatchFiles(files,source){
+ if(batchRunning||batchSaving){$('batchProgress').textContent='読み取り・保存の処理中です。終了してから写真を追加してね。';return}
+ const pictures=Array.from(files||[]).filter(isReceiptImage),available=MAX_STAGED-stagedBatch.length;
+ let added=0;
+ for(const file of pictures.slice(0,Math.max(0,available))){
+  stagedBatch.push({file,preview:URL.createObjectURL(file)});added++;
+ }
+ renderStagedBatch();updateBatchButtons();
+ if(added){$('batchProgress').textContent=`${source}から${added}枚追加したよ。読み取り待ちは合計${stagedBatch.length}枚。続けて撮影するか、まとめて読み取ってね。`}
+ if(pictures.length>added){$('batchProgress').textContent+=` 最大${MAX_STAGED}枚なので、超えた${pictures.length-added}枚は追加していません。`}
+ if(!pictures.length){$('batchProgress').textContent='画像を選択できませんでした。JPEG・PNGなどの写真を選んでね。'}
+}
+$('batchCamera').addEventListener('change',event=>{
+ const files=Array.from(event.target.files||[]);
+ event.target.value=''; // Allow another native camera shot even when iOS reuses the filename.
+ if(files.length)stageBatchFiles(files,'カメラ');
+});
+$('batchFiles').addEventListener('change',event=>{
+ const files=Array.from(event.target.files||[]);
+ event.target.value=''; // Preserve the batch in stagedBatch; same album photos can be selected again.
+ if(files.length)stageBatchFiles(files,'写真フォルダ');
+});
+renderStagedBatch();
+
 // v12: batch proposals are transient. Nothing is written until the user checks
 // the photo, corrects its fields, and explicitly approves that candidate.
-let batchSaving=false;
 function batchDraftFromParsed(parsed){
  const f=parsed?.fields||{},raw=parsed?.raw||'';
  return {
@@ -144,7 +197,7 @@ function updateBatchButtons(){
  if(label)label.textContent=`確認済み ${selected}件／未保存 ${unchecked.length}件／保存済み ${done}件`;
  const save=$('batchSaveAll');
  if(save){save.textContent=`💾 確認済みをまとめて保存（${selected}件）`;save.disabled=!db||!selected||batchRunning||batchSaving}
- const clear=$('batchClearAll');if(clear)clear.disabled=!unchecked.length||batchRunning||batchSaving;
+ const clear=$('batchClearAll');if(clear)clear.disabled=(!unchecked.length&&!stagedBatch.length)||batchRunning||batchSaving;
 }
 function fieldInput(item,key,title,type='text',options=null){
  const label=createEl('label',null,'batchField');
@@ -236,13 +289,16 @@ function openBatchCandidate(index){
 $('batchCancel').onclick=()=>{batchCancelled=true;$('batchProgress').textContent='停止を受け付けました。現在解析している1枚の処理が終わったら停止します。'};
 $('batchClearAll').onclick=()=>{
  if(batchRunning||batchSaving)return;
- const count=pendingBatch.filter(x=>x.status!=='done').length;if(!count)return;
- if(!confirm(`未保存の候補 ${count}件を破棄しますか？（すでに保存した領収書は残ります）`))return;
+ const count=pendingBatch.filter(x=>x.status!=='done').length;
+ if(!count&&!stagedBatch.length)return;
+ if(!confirm(`未保存の候補 ${count}件と読み取り待ち ${stagedBatch.length}枚を破棄しますか？（すでに保存した領収書は残ります）`))return;
  if(batchActiveIndex!=null)resetForm();
  for(let i=pendingBatch.length-1;i>=0;i--)if(pendingBatch[i].status!=='done'){
   URL.revokeObjectURL(pendingBatch[i].preview);pendingBatch.splice(i,1);
  }
- renderBatchQueue();$('batchProgress').textContent='未保存の候補を破棄しました。';
+ for(const shot of stagedBatch)URL.revokeObjectURL(shot.preview);
+ stagedBatch.length=0;
+ renderStagedBatch();renderBatchQueue();$('batchProgress').textContent='未保存の候補と読み取り待ちの写真を破棄しました。';
 };
 $('batchSaveAll').onclick=async()=>{
  if(batchSaving||batchRunning)return;
@@ -283,23 +339,25 @@ $('batchSaveAll').onclick=async()=>{
 };
 $('batchScan').onclick=async()=>{
  if(batchRunning||batchSaving)return;
- const files=Array.from($('batchFiles').files||[]).filter(f=>f.type.startsWith('image/')).slice(0,10);
- if(!files.length){$('batchProgress').textContent='先に領収書の画像を選んでね。';return}
- batchRunning=true;batchCancelled=false;$('batchScan').disabled=true;updateBatchButtons();let worker=null;
+ const shots=stagedBatch.slice(0,MAX_STAGED);
+ if(!shots.length){$('batchProgress').textContent='先にカメラで撮影するか、写真フォルダから画像を追加してね。';return}
+ batchRunning=true;batchCancelled=false;renderStagedBatch();updateBatchButtons();let worker=null;
  try{
   if(!window.Tesseract)await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
   worker=await Tesseract.createWorker('jpn+eng',1);
   await worker.setParameters({preserve_interword_spaces:'1',tessedit_pageseg_mode:'11'});
-  for(let i=0;i<files.length;i++){
+  for(let i=0;i<shots.length;i++){
    if(batchCancelled)break;
-   const file=files[i];$('batchProgress').textContent=`${files.length}枚中 ${i+1}枚目を解析中。終了した候補から確認できるよ。`;
-   const preview=URL.createObjectURL(file);let parsed=null,status='pending',pages=[];
+   const shot=shots[i],file=shot.file;
+   $('batchProgress').textContent=`${shots.length}枚中 ${i+1}枚目を解析中。終了した候補から確認できるよ。`;
+   const preview=shot.preview;let parsed=null,status='pending',pages=[];
    try{
-    const img=await decodeImage(file);const source=$('autoTrim').checked?autoTrimReceiptSource(img):img;pages=canvasPagesForOcr(source,0);
+    const img=await decodeImage(file);const trimmed=$('autoTrim').checked?autoTrimReceiptSource(img):img;
+    const source=$('autoTrim').checked?autoCropHorizontalReceiptSource(trimmed):trimmed;pages=canvasPagesForOcr(source,0);
     const raw=[];
     for(const page of pages){if(batchCancelled)break;raw.push((await worker.recognize(page)).data.text)}
     parsed=parseReceipt(raw.join('\n'));
-    if(!batchCancelled&&(!parsed.fields.invoiceNo||!parsed.fields.date||!parsed.fields.store)){
+    if(!batchCancelled&&(!parsed.fields.invoiceNo||!parsed.fields.date||!parsed.fields.store||!parsed.fields.taxAmount)){
      await worker.setParameters({tessedit_pageseg_mode:'6'});
      const upper=focusedCanvasForOcr(source,0,0,.46);try{
       const extra=parseReceipt((await worker.recognize(upper)).data.text);
@@ -314,15 +372,27 @@ $('batchScan').onclick=async()=>{
        parsed.raw+='\n[下部の日付再解析]\n'+extra.raw;
       }finally{lower.width=0;lower.height=0}
      }
+     if(!batchCancelled&&(!parsed.fields.invoiceNo||!parsed.fields.store||!parsed.fields.taxAmount)){
+      const middle=focusedCanvasForOcr(source,0,.18,.98);
+      try{
+       const extra=parseReceipt((await worker.recognize(middle)).data.text);
+       for(const k of ['store','invoiceNo','taxAmount'])if(extra.fields[k]&&(!parsed.fields[k]||extra.fields[k].score>parsed.fields[k].score+25))parsed.fields[k]=extra.fields[k];
+       parsed.raw+='\n[中央〜下部の再解析]\n'+extra.raw;
+      }finally{middle.width=0;middle.height=0}
+     }
      await worker.setParameters({tessedit_pageseg_mode:'11'});
     }
    }catch(e){status='error';parsed={fields:{},raw:'エラー：'+(e?.message||e)}}
    finally{for(const page of pages){page.width=0;page.height=0}}
-   pendingBatch.push({file,preview,parsed,status,approved:false,draft:batchDraftFromParsed(parsed),warning:''});renderBatchQueue();
+   pendingBatch.push({file,preview,parsed,status,approved:false,draft:batchDraftFromParsed(parsed),warning:''});
+   // The thumbnail URL is transferred to the review candidate; do not revoke it here.
+   const stagedIndex=stagedBatch.indexOf(shot);
+   if(stagedIndex>=0)stagedBatch.splice(stagedIndex,1);
+   renderStagedBatch();renderBatchQueue();
   }
   $('batchProgress').textContent=`候補 ${pendingBatch.filter(x=>x.status!=='done').length}枚。「内容を修正・原本と照合」→チェック→「まとめて保存」の順に進めてね。`;
  }catch(e){$('batchProgress').textContent='一括認識に失敗しました：'+(e?.message||e)+'。1枚ずつの読み取りも試してね。';}
- finally{if(worker)try{await worker.terminate()}catch{}batchRunning=false;$('batchScan').disabled=false;updateBatchButtons();}
+ finally{if(worker)try{await worker.terminate()}catch{}batchRunning=false;renderStagedBatch();updateBatchButtons();}
 };
 // Changing a previously verified T-number invalidates the manual confirmation.
 let invoiceBeforeEdit='';
